@@ -271,6 +271,12 @@ function InstallVcpkgPkgZip {
 	    $control_text = (new-object System.IO.StreamReader($entry.Open())).ReadToEnd()
 	}
 	else {
+	    $dirname = split-path -parent $entry.FullName
+
+	    if (-not (test-path $dirname)) {
+		new-item -itemtype "directory" -path $dirname > $null
+	    }
+
 	    [System.IO.Compression.ZipFileExtensions]::ExtractToFile(
 		$entry,
 		$entry.FullName,
