@@ -68,7 +68,9 @@ vcpkg installation.
 
 Installs a package made with `vcpkg-mkpkg` into the vcpkg installation pointed
 to by the environment variable `VCPKG_ROOT`. If the package or another version
-is already installed for the package triplet, it is removed first.
+is already installed for the package triplet, it is removed first. This command
+does not handle dependencies, you must make and install any necessary dependency
+packages.
 
 #### `vcpkg-rmpkg <pkg>:<triplet>`
 
