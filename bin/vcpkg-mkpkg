@@ -1,0 +1,9 @@
+#!/bin/sh
+
+pwsh=pwsh-preview
+
+if ! command -v pwsh-preview >/dev/null; then
+    pwsh=pwsh
+fi
+
+$pwsh -ExecutionPolicy RemoteSigned -NoProfile -NoLogo -NonInteractive -Command "Import-Module (resolve-path '${0%/*}/../vcpkg-binpkg.psm1'); vcpkg-mkpkg" "$@"
