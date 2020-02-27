@@ -88,7 +88,7 @@ function read_port_control_file {
 
     [array]$control = foreach ($entry in $entries) {
 	[ordered]@{
-	    'Feature'     = $entry.Feature ? $entry.Feature : 'core';
+	    'Feature'     = if ($entry.Feature)  { $entry.Feature } else { 'core' };
 	    'Description' = $entry.Description;
 	    'Depends'     = $entry['Build-Depends'];
 	}
@@ -146,12 +146,17 @@ function WriteVcpkgPkgZip {
 
     $control_file = new-temporaryfile
 
-    $port_control = read_port_control_file $pkg
+    $status_entries = read_status_file | where-object {
+	$_.Package -eq $pkg -and $_.Architecture -eq $triplet
+    }
 
-    foreach ($feature in $port_control) {
-	foreach ($k in $feature.keys) {
-	    write-output ("${k}: " + $feature[$k]) >> $control_file
+    foreach ($entry in $status_entries) {
+	write-output ("Feature: " + $(if ($entry.Feature) { $entry.Feature } else { 'core' })) >> $control_file
+
+	foreach ($key in 'Description', 'Depends') {
+	    write-output ("${key}: " + $entry[$key]) >> $control_file
 	}
+
 	write-output '' >> $control_file
     }
 
