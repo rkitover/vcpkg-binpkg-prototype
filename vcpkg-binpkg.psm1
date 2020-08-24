@@ -35,13 +35,13 @@ function read_status_file {
 	    }
 	    $entry = [ordered]@{}
 	}
-	elseif ($line -match '^([^:]+): +(.*) *$') {
+	elseif ($line -match '^([^:]+): +(.+) *$') {
 	    $entry[$matches[1]] = $matches[2];
 	}
     }
 
     foreach ($entry in $entries) {
-	if (-not $entry['Feature']) {
+	if (-not $entry.contains('Feature')) {
 	    $entry['Feature'] = 'core'
 	}
     }
@@ -300,49 +300,42 @@ function InstallVcpkgPkgZip {
     foreach ($control in $control_entries) {
 	$exists = $false
 
-	foreach ($status in $status_entries) {
-	    if ($status.Package -eq $pkg -and $status.Architecture -eq $triplet -and $status.Feature -eq $control.Feature) {
-		$exists = $true
+	$status_entry = [ordered]@{}
 
-		$status.Package = $pkg
+	$status_entry.Package = $pkg
 
-		if ($control.Feature -eq 'core') {
-		    $status.Version = $version
-		}
-		else {
-		    $status.Feature = $control.Feature
-		}
-
-		$status.Depends       = $control.Depends
-		$status.Architecture  = $triplet
-		$status['Multi-Arch'] = 'same'
-		$status.Description   = $control.Description
-		$status.Type          = 'Port'
-		$status.Status        = 'install ok installed'
-	    }
+	if ($control.Feature -eq 'core') {
+	    $status_entry.Version = $version
+	}
+	else {
+	    $status_entry.Feature = $control.Feature
 	}
 
-	if (-not $exists) {
-	    $new_status_entry = [ordered]@{}
+	$status_entry.Depends       = $control.Depends
+	$status_entry.Architecture  = $triplet
+	$status_entry['Multi-Arch'] = 'same'
+	$status_entry.Description   = $control.Description
+	$status_entry.Type          = 'Port'
+	$status_entry.Status        = 'install ok installed'
 
+	$status_entries = &{
+	    foreach ($status in $status_entries) {
+		if ($status.Package -eq $pkg -and $status.Architecture -eq $triplet -and $status.Feature -eq $control.Feature) {
+		    $exists = $true
 
-	    $new_status_entry.Package = $pkg
+		    @($status.keys) | %{
+			if ($status_entry.contains($_)) {
+			    $status[$_] = $status_entry[$_]
+			}
+		    }
+		}
 
-	    if ($control.Feature -eq 'core') {
-		$new_status_entry.Version = $version
+		$status
 	    }
-	    else {
-		$new_status_entry.Feature = $control.Feature
+
+	    if (-not $exists) {
+		$status_entry
 	    }
-
-	    $new_status_entry.Depends       = $control.Depends
-	    $new_status_entry.Architecture  = $triplet
-	    $new_status_entry['Multi-Arch'] = 'same'
-	    $new_status_entry.Description   = $control.Description
-	    $new_status_entry.Type          = 'Port'
-	    $new_status_entry.Status        = 'install ok installed'
-
-	    $status_entries += $new_status_entry
 	}
     }
 
