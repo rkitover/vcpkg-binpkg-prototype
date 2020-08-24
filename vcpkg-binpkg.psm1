@@ -25,10 +25,14 @@ function read_files {
 	   | where-object { test-path -pathtype leaf $_ }
 }
 
-function read_status_file {
+function read_db {
+    param(
+	[array]$db_lines
+    )
+
     $entry = [ordered]@{}
 
-    [array]$entries = foreach ($line in get-content (join-path $env:VCPKG_ROOT installed/vcpkg/status)) {
+    foreach ($line in $db_lines) {
 	if ($line -match '^$') {
 	    if ($entry.count) {
 		$entry
@@ -39,6 +43,13 @@ function read_status_file {
 	    $entry[$matches[1]] = $matches[2];
 	}
     }
+
+    # There may not be a blank line at the end of the file.
+    if ($entry.count) { $entry }
+}
+
+function read_status_file {
+    [array]$entries = read_db(get-content (join-path $env:VCPKG_ROOT installed/vcpkg/status))
 
     foreach ($entry in $entries) {
 	if (-not $entry.contains('Feature')) {
@@ -71,20 +82,7 @@ function read_port_control_file {
 
     $entry = [ordered]@{}
 
-    [array]$entries = foreach ($line in get-content (join-path $env:VCPKG_ROOT ports/$package/CONTROL)) {
-	if ($line -match '^$') {
-	    if ($entry.count) {
-		$entry
-	    }
-	    $entry = [ordered]@{}
-	}
-	elseif ($line -match '^([^:]+): +(.*) *$') {
-	    $entry[$matches[1]] = $matches[2];
-	}
-    }
-
-    # No blank line at the end of the file.
-    $entries += $entry
+    [array]$entries = read_db(get-content (join-path $env:VCPKG_ROOT ports/$package/CONTROL))
 
     [array]$control = foreach ($entry in $entries) {
 	[ordered]@{
@@ -95,26 +93,6 @@ function read_port_control_file {
     }
 
     return $control
-}
-
-function read_control {
-    param(
-	[string]$control_text
-    )
-
-    $entry = [ordered]@{}
-
-    foreach ($line in ($control_text -split '\r?\n')) {
-	if ($line -match '^$') {
-	    if ($entry.count) {
-		$entry
-	    }
-	    $entry = [ordered]@{}
-	}
-	elseif ($line -match '^([^:]+): +(.*) *$') {
-	    $entry[$matches[1]] = $matches[2];
-	}
-    }
 }
 
 function WriteVcpkgPkgZip {
@@ -294,7 +272,7 @@ function InstallVcpkgPkgZip {
 
     # Update status database.
 
-    $control_entries = read_control $control_text
+    $control_entries = read_db($control_text -split '\r?\n')
     $status_entries  = read_status_file
 
     foreach ($control in $control_entries) {
