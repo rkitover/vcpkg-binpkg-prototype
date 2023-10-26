@@ -6,14 +6,14 @@ function check_env {
 
 function add_zip_entry {
     param(
-	[System.IO.Compression.ZipArchive]$zip,
-	[System.IO.FileInfo]$file,
-	[string]$entry
+		[System.IO.Compression.ZipArchive]$zip,
+		[System.IO.FileInfo]$file,
+		[string]$entry
     )
 
     [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-	$zip, $file, $entry,
-	[System.IO.Compression.CompressionLevel]::Optimal
+		$zip, $file, $entry,
+		[System.IO.Compression.CompressionLevel]::Optimal
     ) > $null
 }
 
@@ -22,7 +22,7 @@ function read_files {
 
     return get-content $file_list `
 	   | %{ "./installed/$_" } `
-	   | where-object { test-path -pathtype leaf $_ }
+	   | ?{ test-path -pathtype leaf $_ }
 }
 
 function read_db {
@@ -116,8 +116,6 @@ function WriteVcpkgPkgZip {
 	write-error -erroraction stop "${pkg}:$triplet is not installed"
     }
 
-    $zip_file  = join-path $cwd ((split-path -leafbase $file_list) + '.zip')
-
     $files = read_files $file_list
 
     # Make CONTROL file.
@@ -125,18 +123,22 @@ function WriteVcpkgPkgZip {
     $control_file = new-temporaryfile
 
     $status_entries = read_status_file | where-object {
-	$_.Package -eq $pkg -and $_.Architecture -eq $triplet
+		$_.Package -eq $pkg -and $_.Architecture -eq $triplet
     }
 
-    foreach ($entry in $status_entries) {
-	write-output ("Feature: " + $(if ($entry.Feature) { $entry.Feature } else { 'core' })) >> $control_file
+    &{foreach ($entry in $status_entries) {
+		write-output ("Feature: " + $(if ($entry.Feature) { $entry.Feature } else { 'core' }))
 
-	foreach ($key in 'Description', 'Depends') {
-	    write-output ("${key}: " + $entry[$key]) >> $control_file
-	}
+		foreach ($key in 'Version', 'Port-Version', 'Depends', 'Abi', 'Description') {
+			write-output ("${key}: " + $entry[$key])
+		}
 
-	write-output '' >> $control_file
-    }
+		write-output ''
+    }} > $control_file
+
+    $revision = ($status_entries | ?{ $_.feature -eq 'core' })[0]['Port-Version']
+
+    $zip_file  = join-path $cwd ((split-path -leafbase $file_list) + '.zip')
 
     write-host -nonewline "Creating $zip_file..."
 
@@ -174,7 +176,7 @@ function file_list {
 	[string]$triplet
     )
 
-    (resolve-path -relative installed/vcpkg/info/${pkg}*${triplet}.list) -replace '\\', '/'
+    (resolve-path -relative installed/vcpkg/info/${pkg}_*${triplet}.list) -replace '\\', '/'
 }
 
 function RemoveVcpkgPkg {
@@ -257,7 +259,7 @@ function InstallVcpkgPkgZip {
 	    $dirname = split-path -parent $entry.FullName
 
 	    if (-not (test-path $dirname)) {
-		new-item -itemtype "directory" -path $dirname > $null
+			new-item -itemtype "directory" -path $dirname > $null
 	    }
 
 	    [System.IO.Compression.ZipFileExtensions]::ExtractToFile(
@@ -276,48 +278,48 @@ function InstallVcpkgPkgZip {
     $status_entries  = read_status_file
 
     foreach ($control in $control_entries) {
-	$exists = $false
+		$exists = $false
 
-	$status_entry = [ordered]@{}
+		$status_entry = [ordered]@{}
 
-	$status_entry.Package = $pkg
+		$status_entry.Package = $pkg
 
-	if ($control.Feature -eq 'core') {
-	    $status_entry.Version = $version
-	}
-	else {
-	    $status_entry.Feature = $control.Feature
-	}
-
-	$status_entry.Depends       = $control.Depends
-	$status_entry.Architecture  = $triplet
-	$status_entry['Multi-Arch'] = 'same'
-	$status_entry.Description   = $control.Description
-	$status_entry.Type          = 'Port'
-	$status_entry.Status        = 'install ok installed'
-
-	$status_entries = &{
-	    foreach ($status in $status_entries) {
-		if ($status.Package -eq $pkg -and $status.Architecture -eq $triplet -and $status.Feature -eq $control.Feature) {
-		    $exists = $true
-
-		    @($status.keys) | %{
-			if ($status_entry.contains($_)) {
-			    $status[$_] = $status_entry[$_]
-			}
-		    }
+		if ($control.Feature -eq 'core') {
+			$status_entry.Version = $version
+		}
+		else {
+			$status_entry.Feature = $control.Feature
 		}
 
-		$status
-	    }
+		$status_entry.Depends       = $control.Depends
+		$status_entry.Architecture  = $triplet
+		$status_entry['Multi-Arch'] = 'same'
+		$status_entry.Description   = $control.Description
+		$status_entry.Type          = 'Port'
+		$status_entry.Status        = 'install ok installed'
 
-	    if (-not $exists) {
-		$status_entry
-	    }
+		$status_entries = &{
+			foreach ($status in $status_entries) {
+				if ($status.Package -eq $pkg -and $status.Architecture -eq $triplet -and $status.Feature -eq $control.Feature) {
+					$exists = $true
+
+					@($status.keys) | %{
+						if ($status_entry.contains($_)) {
+							$status[$_] = $status_entry[$_]
+						}
+					}
+				}
+
+				$status
+			}
+
+			if (-not $exists) {
+				$status_entry
+			}
+		}
+
+		write_status_file $status_entries
 	}
-    }
-
-    write_status_file $status_entries
 
     pop-location
 
