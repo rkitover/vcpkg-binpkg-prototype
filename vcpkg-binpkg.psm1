@@ -22,7 +22,7 @@ function read_files {
 
     return get-content $file_list `
 	   | %{ "./installed/$_" } `
-	   | ?{ test-path -pathtype leaf $_ }
+	   | ?{ test-path -pathtype leaf $_ -ea ignore }
 }
 
 function read_db {
