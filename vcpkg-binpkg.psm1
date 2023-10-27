@@ -49,7 +49,7 @@ function read_db {
 }
 
 function read_status_file {
-    [array]$entries = read_db(get-content (join-path $env:VCPKG_ROOT installed/vcpkg/status))
+    [array]$entries = read_db(get-content (join-path $env:VCPKG_ROOT installed/vcpkg/status) -ea ignore)
 
     foreach ($entry in $entries) {
 	if (-not $entry.contains('Feature')) {
@@ -235,7 +235,7 @@ function InstallVcpkgPkgZip {
 
     [string]$zip_file = resolve-path $zip_file
 
-    ($pkg, $version, $triplet) = (split-path -leafbase $zip_file) -split '_'
+    ($pkg, $version, $triplet) = ((split-path -leaf $zip_file) -replace '\.zip$','') -split '_'
 
     push-location $env:VCPKG_ROOT
 
