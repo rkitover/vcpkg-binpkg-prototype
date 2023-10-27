@@ -291,12 +291,13 @@ function InstallVcpkgPkgZip {
 			$status_entry.Feature = $control.Feature
 		}
 
-		$status_entry.Depends       = $control.Depends
-		$status_entry.Architecture  = $triplet
-		$status_entry['Multi-Arch'] = 'same'
-		$status_entry.Description   = $control.Description
-		$status_entry.Type          = 'Port'
-		$status_entry.Status        = 'install ok installed'
+		$status_entry['Port-Version'] = $control['Port-Version']
+		$status_entry.Depends         = $control.Depends
+		$status_entry.Architecture    = $triplet
+		$status_entry['Multi-Arch']   = 'same'
+		$status_entry.Description     = $control.Description
+		$status_entry.Type            = 'Port'
+		$status_entry.Status          = 'install ok installed'
 
 		$status_entries = &{
 			foreach ($status in $status_entries) {
