@@ -176,7 +176,9 @@ function file_list {
 	[string]$triplet
     )
 
-    (resolve-path -relative installed/vcpkg/info/${pkg}_*${triplet}.list) -replace '\\', '/'
+    (resolve-path -relative `
+		installed/vcpkg/info/${pkg}_*${triplet}.list -ea ignore `
+	) -replace '\\', '/'
 }
 
 function RemoveVcpkgPkg {
