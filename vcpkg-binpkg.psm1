@@ -135,12 +135,16 @@ function WriteVcpkgPkgZip {
 
 		write-output ''
     }} > $control_file
+	
+    $zip_file = (split-path -leaf $file_list) -replace '\.list$',''
+	
+    if ($revision = ($status_entries | ?{ $_.feature -eq 'core' })['Port-Version']) {
+	$zip_file = $zip_file -replace '^([^_]+)_([^_]+)_',('${1}_$2' + "-r${revision}_")
+    }
+	
+    $zip_file  = join-path $cwd ($zip_file + '.zip')
 
-    $revision = ($status_entries | ?{ $_.feature -eq 'core' })[0]['Port-Version']
-
-    $zip_file  = join-path $cwd ((split-path -leafbase $file_list) + '.zip')
-
-    write-host -nonewline "Creating $zip_file..."
+    write-host "Creating $zip_file..."
 
     add-type -assembly 'System.IO.Compression.FileSystem'
 
@@ -200,7 +204,7 @@ function RemoveVcpkgPkg {
 	write-error -erroraction stop "${pkg}:$triplet is not installed"
     }
 
-    write-host -nonewline "Removing ${pkg}:$triplet..."
+    write-host "Removing ${pkg}:$triplet..."
 
     foreach ($file in (read_files $file_list)) {
 	remove-item $file
@@ -245,7 +249,7 @@ function InstallVcpkgPkgZip {
 	RemoveVcpkgPkg "${pkg}:$triplet"
     }
 
-    write-host -nonewline "Installing $zip_file..."
+    write-host "Installing $zip_file..."
 
     add-type -assembly 'System.IO.Compression.FileSystem'
 
