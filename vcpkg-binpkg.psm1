@@ -1,19 +1,25 @@
+add-type -assembly 'System.IO.Compression.FileSystem'
+        
 function check_env {
     if (-not $env:VCPKG_ROOT) {
-	write-error -erroraction stop 'The VCPKG_ROOT environment variable must be set.'
+        write-error -ea stop 'The VCPKG_ROOT environment variable must be set.'
     }
+    
+    $global:vcpkg = join-path $env:VCPKG_ROOT $(
+        if ($iswindows) { 'vcpkg.exe' } else { 'vcpkg' }
+    )
 }
 
 function add_zip_entry {
     param(
-	[System.IO.Compression.ZipArchive]$zip,
-	[System.IO.FileInfo]$file,
-	[string]$entry
+        [System.IO.Compression.ZipArchive]$zip,
+        [System.IO.FileInfo]$file,
+        [string]$entry
     )
 
     [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-	$zip, $file, $entry,
-	[System.IO.Compression.CompressionLevel]::Optimal
+        $zip, $file, $entry,
+        [System.IO.Compression.CompressionLevel]::Optimal
     ) > $null
 }
 
@@ -26,19 +32,19 @@ function read_files([io.fileinfo]$file_list) {
 
 function read_db {
     param(
-	[array]$db_lines
+        [array]$db_lines
     )
 
     $entry = [ordered]@{}
 
     foreach ($line in $db_lines) {
-	if ($line -match '^$') {
-	    if ($entry.count) { $entry }
-	    $entry = [ordered]@{}
-	}
-	elseif ($line -match '^([^:]+): +(.+) *$') {
-	    $entry[$matches[1]] = $matches[2];
-	}
+        if ($line -match '^$') {
+            if ($entry.count) { $entry }
+            $entry = [ordered]@{}
+        }
+        elseif ($line -match '^([^:]+): +(.+) *$') {
+            $entry[$matches[1]] = $matches[2];
+        }
     }
 
     # There may not be a blank line at the end of the file.
@@ -106,7 +112,7 @@ function WriteVcpkgPkgZip {
     pushd $env:VCPKG_ROOT
 
     if (-not ($file_list = file_list $pkg $triplet)) {
-        write-error -erroraction stop "${pkg}:$triplet is not installed"
+        write-error -ea stop "${pkg}:$triplet is not installed"
     }
 
     $files = read_files $file_list
@@ -213,119 +219,170 @@ function RemoveVcpkgPkg {
     'done.'
 }
 
-function InstallVcpkgPkgZip {
-    param(
-        [validatescript({
-            if (-not ((test-path -pathtype leaf $_) -and ($_ -match '\.zip$'))) {
-                throw "$_ is not a zip file"
-            }
-            return $true
-        })]
-        [io.fileinfo]$zip_file
-    )
-
-    check_env
-
-    $zip_file_path = resolve-path $zip_file
-
-    ($pkg, $version, $triplet) = ((split-path -leaf $zip_file_path) -replace '\.zip$','') -split '_'
-    
-    # Parse revision (Port-Version)
-    if ($version -match '(.*)-r(\d+)$') {
-        $version,$revision = $matches[1,2]
+function read_control($zip) {
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($zip);
+    $zip.entries | ?{ $_.fullname -eq 'CONTROL' } | %{
+        $control_text = (new-object System.IO.StreamReader($_.Open())).ReadToEnd()
     }
-
-    pushd $env:VCPKG_ROOT
-
-    if (file_list $pkg $triplet) {
-        RemoveVcpkgPkg "${pkg}:$triplet"
-    }
-
-    "Installing $zip_file..."
-
-    add-type -assembly 'System.IO.Compression.FileSystem'
-
-    [System.IO.Directory]::SetCurrentDirectory($env:VCPKG_ROOT)
-
-    $zip = [System.IO.Compression.ZipFile]::OpenRead($zip_file_path);
-
-    foreach ($entry in $zip.Entries) {
-        if ($entry.FullName -eq 'CONTROL') {
-            $control_text = (new-object System.IO.StreamReader($entry.Open())).ReadToEnd()
-        }
-        else {
-            $dirname = split-path -parent $entry.FullName
-
-            if (-not (test-path $dirname)) {
-                mkdir $dirname > $null
-            }
-
-            [System.IO.Compression.ZipFileExtensions]::ExtractToFile(
-                $entry,
-                $entry.FullName,
-                $true
-            )
-        }
-    }
-
     $zip.dispose()
+    read_db($control_text -split '\r?\n')
+}
 
-    # Update status database.
+function order_zips_by_depends {
+    $zips = [ordered]@{}
 
-    $control_entries = read_db($control_text -split '\r?\n')
-    $status_entries  = read_status_file
+    foreach ($pkg in $input) {
+        $control = read_control $pkg | ?{ $_.feature -eq 'core' }
+        (split-path -leaf $pkg) -match '^[^_]+_[^_]+_(.+)\.zip$' > $null
+        $triplet = $matches[1]
+        $zips[$pkg] = ($control.depends -split ', ') | ? length | %{ if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ } }
+    }
+    
+    $ordered = [ordered]@{}
 
-    foreach ($control in $control_entries) {
-        $exists = $false
+    while ($zips.count) {
+        $pkg = $zips.keys[0]
+        
+        $resolve = {
+            param($pkg)
 
-        $status_entry = [ordered]@{}
+            $zips[$pkg] | %{
+                $_ -match '^([^:]+):(.*)' > $null
+                $pkg_name,$triplet = $matches[1,2]
+            
+                $zips.keys | ?{
+                    (split-path -leaf $_) -match "^${pkg_name}_[^_]+_${triplet}\.zip" `
+                    -and -not $ordered.contains($_)
+                }
+            } | %{ &$resolve $_ }
+            
+            $ordered[$pkg] = $true
+            $zips.remove($pkg)
+        }
+        
+        &$resolve $pkg
+    }
+    
+    $ordered.keys
+}
 
-        $status_entry.Package = $pkg
+function InstallVcpkgPkgZip($zips) {
+    check_env
+    
+    $zips = if (test-path -pathtype leaf $zips) { (resolve-path $zips).path } `
+            else { gci $zips -filter '*.zip' | % fullname | order_zips_by_depends }
+    
+    foreach ($zip_file in $zips) {
+        ($pkg, $version, $triplet) = ((split-path -leaf $zip_file) -replace '\.zip$','') -split '_'
+        
+        # Parse revision (Port-Version)
+        if ($version -match '(.*)-r(\d+)$') {
+            $version,$revision = $matches[1,2]
+        }
 
-        if ($control.Feature -eq 'core') {
-            $status_entry.Version = $version
+        $status_entries  = read_status_file
+        $control_entries = read_control $zip_file
 
-            if ($revision) {
-                $status_entry['Port-Version'] = $revision
+        # Install build deps
+
+        $deps = $control_entries | ?{ $_.feature -eq 'core' } | %{ $_.depends -split ', ' } | ?{ $_ -match '^vcpkg-' }
+        
+        foreach ($build_dep in $deps) {
+            $build_dep -match '^([^:]+):(.*)' > $null
+            $build_dep,$build_dep_triplet = $matches[1,2]
+            if (-not ($status_entries | ?{ $_.package -eq $build_dep -and $_.architecture -eq $build_dep_triplet })) {
+                &$vcpkg install "${build_dep}:$build_dep_triplet"
+                # status db is only fully written on next operation, so do a dummy operation
+                &$vcpkg install nonexistent *> $null
+                # update status db after install
+                $status_entries  = read_status_file
             }
         }
-        else {
-            $status_entry.Feature = $control.Feature
+
+        pushd $env:VCPKG_ROOT
+
+        if (file_list $pkg $triplet) {
+            RemoveVcpkgPkg "${pkg}:$triplet"
         }
 
-        $status_entry.Depends         = $control.Depends
-        $status_entry.Architecture    = $triplet
-        $status_entry['Multi-Arch']   = 'same'
-        $status_entry.Description     = $control.Description
-        $status_entry.Type            = 'Port'
-        $status_entry.Status          = 'install ok installed'
+        "Installing $zip_file..."
 
-        $status_entries = &{
-            foreach ($status in $status_entries) {
-                if ($status.Package -eq $pkg -and $status.Architecture -eq $triplet -and $status.Feature -eq $control.Feature) {
-                    $exists = $true
+        [System.IO.Directory]::SetCurrentDirectory($env:VCPKG_ROOT)
 
-                    @($status.keys) | %{
-                        if ($status_entry.contains($_)) {
-                            $status[$_] = $status_entry[$_]
-                        }
-                    }
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($zip_file);
+
+        foreach ($entry in $zip.entries) {
+            if ($entry.fullname -ne 'CONTROL') {
+                $dirname = split-path -parent $entry.fullname
+
+                if (-not (test-path $dirname)) {
+                    mkdir $dirname > $null
                 }
 
-                $status
-            }
-
-            if (-not $exists) {
-                $status_entry
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile(
+                    $entry,
+                    $entry.FullName,
+                    $true
+                )
             }
         }
 
-        write_status_file $status_entries
+        $zip.dispose()
+
+        # Update status database.
+
+        foreach ($control in $control_entries) {
+            $exists = $false
+
+            $status_entry = [ordered]@{}
+
+            $status_entry.Package = $pkg
+
+            if ($control.Feature -eq 'core') {
+                $status_entry.Version = $version
+
+                if ($revision) {
+                    $status_entry['Port-Version'] = $revision
+                }
+            }
+            else {
+                $status_entry.Feature = $control.Feature
+            }
+
+            $status_entry.Depends         = $control.Depends
+            $status_entry.Architecture    = $triplet
+            $status_entry['Multi-Arch']   = 'same'
+            $status_entry.Description     = $control.Description
+            $status_entry.Type            = 'Port'
+            $status_entry.Status          = 'install ok installed'
+
+            $status_entries = &{
+                foreach ($status in $status_entries) {
+                    if ($status.Package -eq $pkg -and $status.Architecture -eq $triplet -and $status.Feature -eq $control.Feature) {
+                        $exists = $true
+
+                        @($status.keys) | %{
+                            if ($status_entry.contains($_)) {
+                                $status[$_] = $status_entry[$_]
+                            }
+                        }
+                    }
+
+                    $status
+                }
+
+                if (-not $exists) {
+                    $status_entry
+                }
+            }
+
+            write_status_file $status_entries
+        }
+
+        popd
+
+        'done.'
     }
-
-    popd
-
-    'done.'
 }
 
 set-alias -name vcpkg-rmpkg   -val RemoveVcpkgPkg
@@ -335,5 +392,5 @@ set-alias -name vcpkg-mkpkg   -val WriteVcpkgPkgZip
 set-alias -name vcpkg-instpkg -val InstallVcpkgPkgZip
 
 export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg `
-		    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg
+                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg
 
