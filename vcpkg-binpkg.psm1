@@ -241,7 +241,7 @@ function order_zips_by_depends {
     $ordered = [ordered]@{}
 
     while ($zips.count) {
-        $pkg = $zips.keys[0]
+        $pkg = $zips.getenumerator() | select -first 1 | % key
         
         $resolve = {
             param($pkg)
@@ -250,7 +250,7 @@ function order_zips_by_depends {
                 $_ -match '^([^:]+):(.*)' > $null
                 $pkg_name,$triplet = $matches[1,2]
             
-                $zips.keys | ?{
+                @($zips.keys) | ?{
                     (split-path -leaf $_) -match "^${pkg_name}_[^_]+_${triplet}\.zip" `
                     -and -not $ordered.contains($_)
                 }
