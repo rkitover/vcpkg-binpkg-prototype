@@ -127,8 +127,12 @@ function WriteVcpkgPkgZip {
     &{foreach ($entry in $status_entries) {
         "Feature: " + $(if ($entry.Feature) { $entry.Feature } else { 'core' })
 
-        foreach ($key in 'Version', 'Port-Version', 'Depends', 'Abi', 'Description') {
+        foreach ($key in 'Version', 'Depends', 'Abi', 'Description') {
             "${key}: " + $entry[$key]
+        }
+        
+        if ($entry.contains('Port-Version')) {
+            "Port-Version: " + $entry['Port-Version']
         }
 
         ''
@@ -271,11 +275,12 @@ function InstallVcpkgPkgZip($zips) {
     
     $zips = if (test-path -pathtype leaf $zips) { (resolve-path $zips).path } `
             else { gci $zips -filter '*.zip' | % fullname | order_zips_by_depends }
-    
+
     foreach ($zip_file in $zips) {
         ($pkg, $version, $triplet) = ((split-path -leaf $zip_file) -replace '\.zip$','') -split '_'
-        
+
         # Parse revision (Port-Version)
+        $revision = $null
         if ($version -match '(.*)-r(\d+)$') {
             $version,$revision = $matches[1,2]
         }
