@@ -249,13 +249,16 @@ function order_zips_by_depends {
         
         $resolve = {
             param($pkg)
-
-            $zips[$pkg] | %{
+            
+            (split-path -leaf $pkg) -match '^([^_]+)' > $null
+            $pkg_name = $matches[1]
+            
+            $zips[$pkg] | ?{ $_ -notmatch "^${pkg_name}(:|`$)" } | %{
                 $_ -match '^([^:]+):(.*)' > $null
-                $pkg_name,$triplet = $matches[1,2]
+                $dep_name,$triplet = $matches[1,2]
             
                 @($zips.keys) | ?{
-                    (split-path -leaf $_) -match "^${pkg_name}_[^_]+_${triplet}\.zip" `
+                    (split-path -leaf $_) -match "^${dep_name}_[^_]+_${triplet}\.zip" `
                     -and -not $ordered.contains($_)
                 }
             } | %{ &$resolve $_ }
@@ -291,10 +294,18 @@ function InstallVcpkgPkgZip($zips) {
         # Install build deps
 
         $deps = $control_entries | ?{ $_.feature -eq 'core' } | %{ $_.depends -split ', ' } | ?{ $_ -match '^vcpkg-' }
-        
+
+        $host_triplet = if ($iswindows) { 'x64-windows' }
+                        elseif ($islinux) { 'x64-linux' }
+                        elseif ($ismacos) { 'x64-osx' }
+                        else { $triplet -replace '(-static|-dynamic|-release|-md)','' }
+
         foreach ($build_dep in $deps) {
-            $build_dep -match '^([^:]+):(.*)' > $null
+            $build_dep -match '^([^:]+):?(.*)' > $null
             $build_dep,$build_dep_triplet = $matches[1,2]
+
+            if (-not $build_dep_triplet) { $build_dep_triplet = $host_triplet }
+
             if (-not ($status_entries | ?{ $_.package -eq $build_dep -and $_.architecture -eq $build_dep_triplet })) {
                 &$vcpkg install "${build_dep}:$build_dep_triplet"
                 # status db is only fully written on next operation, so do a dummy operation
@@ -321,7 +332,7 @@ function InstallVcpkgPkgZip($zips) {
                 $dirname = split-path -parent $entry.fullname
 
                 if (-not (test-path $dirname)) {
-                    mkdir $dirname > $null
+                    ni -it dir $dirname > $null
                 }
 
                 [System.IO.Compression.ZipFileExtensions]::ExtractToFile(
