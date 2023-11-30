@@ -4,22 +4,16 @@ function check_env {
     if (-not $env:VCPKG_ROOT) {
         write-error -ea stop 'The VCPKG_ROOT environment variable must be set.'
     }
-    
+
     $global:vcpkg = join-path $env:VCPKG_ROOT $(
         if ($iswindows) { 'vcpkg.exe' } else { 'vcpkg' }
     )
 }
 
-function add_zip_entry {
-    param(
-        [System.IO.Compression.ZipArchive]$zip,
-        [System.IO.FileInfo]$file,
-        [string]$entry
-    )
-
-    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+function add_zip_entry([io.compression.ziparchive]$zip, [io.fileinfo]$file, $entry) {
+    [io.compression.zipfileextensions]::createentryfromfile(
         $zip, $file, $entry,
-        [System.IO.Compression.CompressionLevel]::Optimal
+        [io.compression.compressionlevel]::optimal
     ) > $null
 }
 
@@ -276,9 +270,27 @@ function order_zips_by_depends {
 function InstallVcpkgPkgZip($zips) {
     check_env
     
+# Relaunch as an elevated process for default VS vcpkg.
+    if ((convert-path $env:VCPKG_ROOT) -match 'C:\\Program Files\\Microsoft Visual Studio\\') {
+        if (-not ([security.principal.windowsprincipal] [security.principal.windowsidentity]::getcurrent() `
+            ).isinrole([security.principal.windowsbuiltInrole]::administrator) `
+        ) {
+            'Elevation is required for writing to the default VS vcpkg, please confirm the following UAC prompt...'
+            $pwsh = [system.diagnostics.process]::getcurrentprocess().mainmodule.filename
+            start-process -wait -verb runas `
+                $pwsh '-noprofile', '-executionpolicy', 'bypass', '-command', `
+                    "sl '$pwd'; import-module '$pscommandpath'; `$env:VCPKG_ROOT = '$env:VCPKG_ROOT'; vcpkg-instpkg $zips"
+            exit
+        }
+    }
+
     $zips = if (test-path -pathtype leaf $zips) { (resolve-path $zips).path } `
             else { gci $zips -filter '*.zip' | % fullname | order_zips_by_depends }
-
+    
+    if (-not $zips) {
+        write-error -ea stop 'No packages to install'
+    }
+    
     foreach ($zip_file in $zips) {
         ($pkg, $version, $triplet) = ((split-path -leaf $zip_file) -replace '\.zip$','') -split '_'
 
@@ -300,6 +312,7 @@ function InstallVcpkgPkgZip($zips) {
                         elseif ($ismacos) { 'x64-osx' }
                         else { $triplet -replace '(-static|-dynamic|-release|-md)','' }
 
+        
         foreach ($build_dep in $deps) {
             $build_dep -match '^([^:]+):?(.*)' > $null
             $build_dep,$build_dep_triplet = $matches[1,2]
@@ -307,6 +320,7 @@ function InstallVcpkgPkgZip($zips) {
             if (-not $build_dep_triplet) { $build_dep_triplet = $host_triplet }
 
             if (-not ($status_entries | ?{ $_.package -eq $build_dep -and $_.architecture -eq $build_dep_triplet })) {
+                "Installing build dependency ${build_dep}:$build_dep_triplet for $zip_file..."
                 &$vcpkg install "${build_dep}:$build_dep_triplet"
                 # status db is only fully written on next operation, so do a dummy operation
                 &$vcpkg install nonexistent *> $null
