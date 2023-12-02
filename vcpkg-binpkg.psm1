@@ -415,12 +415,60 @@ function InstallVcpkgPkgZip($zips) {
     }
 }
 
-set-alias -name vcpkg-rmpkg   -val RemoveVcpkgPkg
+function common_prefix($a, $b) {
+    for ($i = 0; $i -lt $a.length -and $i -lt $b.length -and $a[$i] -eq $b[$i]; $i++) {}
+    $a.substring(0, $i)
+}
 
-set-alias -name vcpkg-mkpkg   -val WriteVcpkgPkgZip
+function ListVcpkgPorts([string]$pattern) {
+    if (-not $pattern.length) { $pattern = '' }
 
-set-alias -name vcpkg-instpkg -val InstallVcpkgPkgZip
+    $status_entries  = read_status_file `
+        | %{ if ($_.feature -eq 'core') { $_.feature = '' }; $_ } `
+        | sort { $_.package,$_.feature,$_.architecture }
 
-export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg `
-                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg
+#    for ($i = 0; $i -lt $status_entries.length - 1; $i++) {
+#        $prefix = common_prefix $status_entries[$i].package $status_entries[$i + 1].package
+#    }
 
+    foreach ($status in $status_entries) {
+        if (-not ($status.package -match $pattern)) { continue }
+
+        $name_column = if (-not $status.feature.length) {
+            '{0}:{1}'      -f $status.package,$status.architecture
+        }
+        else {
+            '{0}[{1}]:{2}' -f $status.package,$status.feature,$status.architecture
+        }
+
+        $version_column = $status.version
+
+        if ($status.contains('Port-Version')) {
+            $version_column += '#' + $status['Port-Version']
+        }
+
+        $description_column = $status.description
+
+        if ($name_column.length -gt 50) {
+            $name_column = $name_column.substring(0, 47) + '...'
+        }
+
+        if ($version_column.length -gt 20) {
+            $version_column = $version_column.substring(0, 17) + '...'
+        }
+
+        if ($description_column.length -gt 51) {
+            $description_column = $description_column.substring(0, 48) + '...'
+        }
+
+        '{0,-50}{1,-20}{2}' -f $name_column, $version_column, $description_column
+    }
+}
+
+set-alias vcpkg-rmpkg   RemoveVcpkgPkg
+set-alias vcpkg-mkpkg   WriteVcpkgPkgZip
+set-alias vcpkg-instpkg InstallVcpkgPkgZip
+set-alias vcpkg-list    ListVcpkgPorts
+
+export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg,    vcpkg-list `
+                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg, ListVcpkgPorts
