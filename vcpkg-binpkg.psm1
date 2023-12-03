@@ -280,7 +280,7 @@ function InstallVcpkgPkgZip($zips) {
             start-process -wait -verb runas `
                 $pwsh '-noprofile', '-executionpolicy', 'bypass', '-command', `
                     "sl '$pwd'; import-module '$pscommandpath'; `$env:VCPKG_ROOT = '$env:VCPKG_ROOT'; vcpkg-instpkg $zips"
-            exit
+            return
         }
     }
 
@@ -337,9 +337,9 @@ function InstallVcpkgPkgZip($zips) {
 
         "Installing $zip_file..."
 
-        [System.IO.Directory]::SetCurrentDirectory($env:VCPKG_ROOT)
+        [io.directory]::setcurrentdirectory($env:VCPKG_ROOT)
 
-        $zip = [System.IO.Compression.ZipFile]::OpenRead($zip_file);
+        $zip = [io.compression.zipfile]::openread($zip_file);
 
         foreach ($entry in $zip.entries) {
             if ($entry.fullname -ne 'CONTROL') {
@@ -349,9 +349,9 @@ function InstallVcpkgPkgZip($zips) {
                     ni -it dir $dirname > $null
                 }
 
-                [System.IO.Compression.ZipFileExtensions]::ExtractToFile(
+                [io.compression.zipfileextensions]::extracttofile(
                     $entry,
-                    $entry.FullName,
+                    $entry.fullname,
                     $true
                 )
             }
@@ -376,19 +376,19 @@ function InstallVcpkgPkgZip($zips) {
                 }
             }
             else {
-                $status_entry.Feature = $control.Feature
+                $status_entry.Feature = $control.feature
             }
 
-            $status_entry.Depends         = $control.Depends
+            $status_entry.Depends         = $control.depends
             $status_entry.Architecture    = $triplet
             $status_entry['Multi-Arch']   = 'same'
-            $status_entry.Description     = $control.Description
+            $status_entry.Description     = $control.description
             $status_entry.Type            = 'Port'
             $status_entry.Status          = 'install ok installed'
 
             $status_entries = &{
                 foreach ($status in $status_entries) {
-                    if ($status.Package -eq $pkg -and $status.Architecture -eq $triplet -and $status.Feature -eq $control.Feature) {
+                    if ($status.package -eq $pkg -and $status.architecture -eq $triplet -and $status.feature -eq $control.feature) {
                         $exists = $true
                         
                         if (-not $revision) {
@@ -399,6 +399,10 @@ function InstallVcpkgPkgZip($zips) {
                             if ($status_entry.contains($_)) {
                                 $status[$_] = $status_entry[$_]
                             }
+                        }
+
+                        @($status_entry.keys) | ?{ -not $status.contains($_) } | %{
+                            $status[$_] = $status_entry[$_]
                         }
                     }
 
