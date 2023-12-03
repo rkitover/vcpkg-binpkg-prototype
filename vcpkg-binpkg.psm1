@@ -276,7 +276,7 @@ function InstallVcpkgPkgZip($zips) {
             ).isinrole([security.principal.windowsbuiltInrole]::administrator) `
         ) {
             'Elevation is required for writing to the default VS vcpkg, please confirm the following UAC prompt...'
-            $pwsh = [system.diagnostics.process]::getcurrentprocess().mainmodule.filename
+            $pwsh = [diagnostics.process]::getcurrentprocess().mainmodule.filename
             start-process -wait -verb runas `
                 $pwsh '-noprofile', '-executionpolicy', 'bypass', '-command', `
                     "sl '$pwd'; import-module '$pscommandpath'; `$env:VCPKG_ROOT = '$env:VCPKG_ROOT'; vcpkg-instpkg $zips"
@@ -390,6 +390,10 @@ function InstallVcpkgPkgZip($zips) {
                 foreach ($status in $status_entries) {
                     if ($status.Package -eq $pkg -and $status.Architecture -eq $triplet -and $status.Feature -eq $control.Feature) {
                         $exists = $true
+                        
+                        if (-not $revision) {
+                            $status.remove('Port-Version')
+                        }
 
                         @($status.keys) | %{
                             if ($status_entry.contains($_)) {
