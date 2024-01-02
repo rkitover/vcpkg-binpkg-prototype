@@ -158,6 +158,8 @@ function WriteVcpkgPkgZip {
     add_zip_entry $zip $file_list $file_list
 
     foreach ($file in $files) {
+        if ((gi $file).linktarget) { continue }
+
         add_zip_entry $zip $file $file
     }
 
