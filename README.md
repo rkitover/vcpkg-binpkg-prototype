@@ -64,13 +64,16 @@ Given an installed package qualified with its triplet, this command will create
 a `.zip` binary package in the current directory that can be installed in any
 vcpkg installation.
 
-#### `vcpkg-instpkg <package.zip>`
+#### `vcpkg-instpkg [<package.zip>|<directory>]`
 
 Installs a package made with `vcpkg-mkpkg` into the vcpkg installation pointed
 to by the environment variable `VCPKG_ROOT`. If the package or another version
-is already installed for the package triplet, it is removed first. This command
-does not handle dependencies, you must make and install any necessary dependency
-packages.
+is already installed for the package triplet, it is removed first.
+
+Build dependencies are automatically installed in new vcpkg clones.
+
+You can also pass a directory path containing packages and they will be
+installed in dependency order.
 
 #### `vcpkg-rmpkg <pkg>:<triplet>`
 
