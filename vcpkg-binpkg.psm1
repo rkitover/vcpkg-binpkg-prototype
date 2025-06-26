@@ -269,6 +269,55 @@ function order_zips_by_depends {
     $ordered.keys
 }
 
+function missing_deps_in_zips {
+    $pkgs = [ordered]@{}
+
+    $default_triplet = $null
+
+    foreach ($pkg in $input) {
+        $control = read_control $pkg | ?{ $_.feature -eq 'core' }
+        (split-path -leaf $pkg) -match '^([^_]+)_[^_]+_(.+)\.zip$' > $null
+        $pkg_name = $matches[1]
+        $triplet  = $matches[2]
+        if (-not $default_triplet) { $default_triplet = $triplet }
+        $pkgs["${pkg_name}:${triplet}"] = ($control.depends -split ', ') | ? length | %{ if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ } }
+    }
+
+    $missing = [ordered]@{}
+
+    foreach ($pkg in $pkgs.keys) {
+        $deps = $pkgs[$pkg]
+        
+        if (-not $deps) { continue }
+
+        foreach ($dep in $deps) {
+            if ($dep -notmatch ':') {
+                $dep = "${dep}:${default_triplet}"
+            }
+
+            if (-not $pkgs.contains($dep)) {
+                $missing[$dep] = $true
+            }
+        }
+    }
+
+    $missing.keys
+}
+
+function ListMissingDepsInZipsDir($zips) {
+    if (-not $zips) {
+        $zips = join-path $env:VCPKG_ROOT 'ports'
+    }
+
+    if (-not (test-path -pathtype container $zips)) {
+        write-error -ea stop "Directory $zips does not exist."
+    }
+
+    $zips = resolve-path $zips
+
+    gci $zips -filter '*.zip' | % fullname | missing_deps_in_zips
+}
+
 function InstallVcpkgPkgZip($zips) {
     check_env
     
@@ -475,10 +524,11 @@ function ListVcpkgPorts([string]$pattern) {
     }
 }
 
-set-alias vcpkg-rmpkg   RemoveVcpkgPkg
-set-alias vcpkg-mkpkg   WriteVcpkgPkgZip
-set-alias vcpkg-instpkg InstallVcpkgPkgZip
-set-alias vcpkg-list    ListVcpkgPorts
+set-alias vcpkg-rmpkg       RemoveVcpkgPkg
+set-alias vcpkg-mkpkg       WriteVcpkgPkgZip
+set-alias vcpkg-instpkg     InstallVcpkgPkgZip
+set-alias vcpkg-list        ListVcpkgPorts
+set-alias vcpkg-listmissing ListMissingDepsInZipsDir
 
-export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg,    vcpkg-list `
-                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg, ListVcpkgPorts
+export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg,    vcpkg-list,     vcpkg-listmissing `
+                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg, ListVcpkgPorts, ListMissingDepsInZipsDir

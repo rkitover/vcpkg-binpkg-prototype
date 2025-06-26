@@ -8,7 +8,8 @@
   - [Installation (Linux or MacOS)](#installation-linux-or-macos)
   - [USAGE](#usage)
     - [`vcpkg-mkpkg <pkg>:<triplet>`](#vcpkg-mkpkg-pkgtriplet)
-    - [`vcpkg-instpkg <package.zip>`](#vcpkg-instpkg-packagezip)
+    - [`vcpkg-instpkg [<package.zip>|<directory>]`](#vcpkg-instpkg-packagezipdirectory)
+    - [`vcpkg-listmissing <directory>`](#vcpkg-listmissing-directory)
     - [`vcpkg-rmpkg <pkg>:<triplet>`](#vcpkg-rmpkg-pkgtriplet)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -74,6 +75,12 @@ Build dependencies are automatically installed in new vcpkg clones.
 
 You can also pass a directory path containing packages and they will be
 installed in dependency order.
+
+#### `vcpkg-listmissing <directory>`
+
+Lists missing dependencies in the package set in the given directory. This is
+normal for e.g. host build dependencies such as `vcpkg-cmake` for a non-host
+triplet such as `-static`.
 
 #### `vcpkg-rmpkg <pkg>:<triplet>`
 
