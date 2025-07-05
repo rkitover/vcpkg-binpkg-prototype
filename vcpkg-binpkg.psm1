@@ -484,6 +484,8 @@ function ListVcpkgPorts([string]$pattern) {
 
     $status_entries  = read_status_file `
         | %{ if ($_.feature -eq 'core') { $_.feature = '' }; $_ } `
+        | ?{ $_.status -eq 'install ok installed' } `
+        | ?{ $_.package -match $pattern } `
         | sort { $_.package,$_.feature,$_.architecture }
 
 #    for ($i = 0; $i -lt $status_entries.length - 1; $i++) {
@@ -491,8 +493,6 @@ function ListVcpkgPorts([string]$pattern) {
 #    }
 
     foreach ($status in $status_entries) {
-        if (-not ($status.package -match $pattern)) { continue }
-
         $name_column = if (-not $status.feature.length) {
             '{0}:{1}'      -f $status.package,$status.architecture
         }
