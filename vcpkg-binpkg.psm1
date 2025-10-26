@@ -372,7 +372,7 @@ function InstallVcpkgPkgZip($zips) {
 
             if (-not ($status_entries | ?{ $_.package -eq $build_dep -and $_.architecture -eq $build_dep_triplet })) {
                 "Installing build dependency ${build_dep}:$build_dep_triplet for $zip_file..."
-                &$vcpkg install "${build_dep}:$build_dep_triplet"
+                &$vcpkg install --allow-unsupported "${build_dep}:$build_dep_triplet"
                 # status db is only fully written on next operation, so do a dummy operation
                 &$vcpkg install nonexistent *> $null
                 # update status db after install
