@@ -486,7 +486,7 @@ function ListVcpkgPorts([string]$pattern) {
         | %{ if ($_.feature -eq 'core') { $_.feature = '' }; $_ } `
         | ?{ $_.status -eq 'install ok installed' } `
         | ?{ $_.package -match $pattern } `
-        | sort { $_.package,$_.feature,$_.architecture }
+        | sort-object { $_.package,$_.feature,$_.architecture }
 
 #    for ($i = 0; $i -lt $status_entries.length - 1; $i++) {
 #        $prefix = common_prefix $status_entries[$i].package $status_entries[$i + 1].package
