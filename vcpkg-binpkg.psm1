@@ -158,9 +158,11 @@ function WriteVcpkgPkgZip {
     add_zip_entry $zip $file_list $file_list
 
     foreach ($file in $files) {
-        if ((gi $file).linktarget) { continue }
+        if (test-path $file) {
+            if ((gi $file -ea ignore).linktarget) { continue }
 
-        add_zip_entry $zip $file $file
+            add_zip_entry $zip $file $file
+        }
     }
 
     $zip.dispose()
