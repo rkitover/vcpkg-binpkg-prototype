@@ -157,12 +157,20 @@ function WriteVcpkgPkgZip {
 
     add_zip_entry $zip $file_list $file_list
 
-    foreach ($file in $files) {
-        if (test-path $file) {
-            if ((gi $file -ea ignore).linktarget) { continue }
+    $symlinks_file = new-temporaryfile
 
-            add_zip_entry $zip $file $file
+    &{foreach ($file in $files) {
+        if ($link_target = (gi $file -ea ignore).linktarget) {
+            $file
+            $link_target
+            continue
         }
+
+        add_zip_entry $zip $file $file
+    }} > $symlinks_file
+
+    if ((gi $symlinks_file).length -gt 0) {
+        add_zip_entry $zip $symlinks_file 'SYMLINKS'
     }
 
     $zip.dispose()
@@ -170,6 +178,7 @@ function WriteVcpkgPkgZip {
     popd
 
     remove-item $control_file
+    remove-item $symlinks_file
 
     'done.'
 }
@@ -228,6 +237,16 @@ function read_control($zip) {
     }
     $zip.dispose()
     read_db($control_text -split '\r?\n')
+}
+
+function read_symlinks($zip) {
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($zip);
+    $zip.entries | ?{ $_.fullname -eq 'SYMLINKS' } | %{
+        $symlinks_text = (new-object System.IO.StreamReader($_.Open())).ReadToEnd()
+    }
+    $zip.dispose()
+    $symlinks = $symlinks_text -split '\r?\n'
+    $symlinks[0..($symlinks.length-2)]
 }
 
 function order_zips_by_depends {
@@ -354,7 +373,8 @@ function InstallVcpkgPkgZip($zips) {
         }
 
         $status_entries  = read_status_file
-        $control_entries = read_control $zip_file
+        $control_entries = read_control  $zip_file
+        $symlinks        = read_symlinks $zip_file
 
         # Install build deps
 
@@ -395,7 +415,7 @@ function InstallVcpkgPkgZip($zips) {
         $zip = [io.compression.zipfile]::openread($zip_file);
 
         foreach ($entry in $zip.entries) {
-            if ($entry.fullname -ne 'CONTROL') {
+            if ($entry.fullname -notmatch '^(CONTROL|SYMLINKS)$') {
                 $dirname = split-path -parent $entry.fullname
 
                 if (-not (test-path $dirname)) {
@@ -407,6 +427,17 @@ function InstallVcpkgPkgZip($zips) {
                     $entry.fullname,
                     $true
                 )
+            }
+        }
+
+        for ($i = 0; $i -lt $symlinks.length; $i += 2) {
+            $link   = $symlinks[$i]
+            $target = $symlinks[$i+1]
+
+            ni -it sym $link -tar $target -ea ignore > $null
+
+            if (-not ((gi $link -ea ignore).linktarget)) {
+                cpi -force $target $link
             }
         }
 
