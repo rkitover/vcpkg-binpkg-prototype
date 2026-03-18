@@ -245,8 +245,8 @@ function read_symlinks($zip) {
         $symlinks_text = (new-object System.IO.StreamReader($_.Open())).ReadToEnd()
     }
     $zip.dispose()
-    $symlinks = $symlinks_text -split '\r?\n'
-    $symlinks[0..($symlinks.length-2)]
+
+    $symlinks_text -split '\r?\n' | ? length
 }
 
 function order_zips_by_depends {
