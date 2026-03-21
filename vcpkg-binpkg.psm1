@@ -357,6 +357,85 @@ function ListMissingDepsInZipsDir($zips) {
     gci $zips -filter '*.zip' | % fullname | missing_deps_in_zips
 }
 
+function PruneIncompleteZips($zips_dir) {
+    check_env
+
+    if (-not $zips_dir) { $zips_dir = '.' }
+
+    if (-not (test-path -pathtype container $zips_dir)) {
+        write-error -ea stop "Directory $zips_dir does not exist."
+    }
+
+    $zips_dir = resolve-path $zips_dir
+
+    $status_entries = read_status_file | ?{ $_.status -eq 'install ok installed' }
+
+    $removed = @()
+
+    while ($true) {
+        $pkg_zips = [ordered]@{}
+
+        foreach ($zip in (gci $zips_dir -filter '*.zip' | % fullname)) {
+            $control = read_control $zip
+            (split-path -leaf $zip) -match '^([^_]+)_[^_]+_(.+)\.zip$' > $null
+            $pkg_name = $matches[1]
+            $triplet  = $matches[2]
+
+            $all_deps = @()
+            foreach ($entry in $control) {
+                if ($entry.depends) {
+                    $all_deps += ($entry.depends -split ', ') | ? length
+                }
+            }
+
+            $qualified_deps = $all_deps | %{
+                if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ }
+            } | ?{
+                # Exclude self-references.
+                ($_ -split ':')[0] -ne $pkg_name
+            }
+
+            $pkg_zips["${pkg_name}:${triplet}"] = @{
+                zip  = $zip
+                deps = @($qualified_deps)
+            }
+        }
+
+        $to_remove = @()
+
+        foreach ($pkg in @($pkg_zips.keys)) {
+            foreach ($dep in $pkg_zips[$pkg].deps) {
+                if ($dep -notmatch '^([^:]+):(.+)$') { continue }
+                $dep_name    = $matches[1]
+                $dep_triplet = $matches[2]
+
+                # Present as a zip in the set?
+                if ($pkg_zips.contains($dep)) { continue }
+
+                # Already installed in vcpkg?
+                if ($status_entries | ?{
+                    $_.package -eq $dep_name -and $_.architecture -eq $dep_triplet
+                }) { continue }
+
+                # Unresolvable dep.
+                $to_remove += $pkg
+                break
+            }
+        }
+
+        if (-not $to_remove.count) { break }
+
+        foreach ($pkg in $to_remove) {
+            $zip_name = split-path -leaf $pkg_zips[$pkg].zip
+            "Removing $zip_name (has unresolvable dependencies)"
+            remove-item $pkg_zips[$pkg].zip
+            $removed += $zip_name
+        }
+    }
+
+    $removed
+}
+
 function InstallVcpkgPkgZip($zips) {
     check_env
     
@@ -575,11 +654,12 @@ function ListVcpkgPorts([string]$pattern) {
     }
 }
 
-set-alias vcpkg-rmpkg       RemoveVcpkgPkg
-set-alias vcpkg-mkpkg       WriteVcpkgPkgZip
-set-alias vcpkg-instpkg     InstallVcpkgPkgZip
-set-alias vcpkg-list        ListVcpkgPorts
-set-alias vcpkg-listmissing ListMissingDepsInZipsDir
+set-alias vcpkg-rmpkg            RemoveVcpkgPkg
+set-alias vcpkg-mkpkg            WriteVcpkgPkgZip
+set-alias vcpkg-instpkg          InstallVcpkgPkgZip
+set-alias vcpkg-list             ListVcpkgPorts
+set-alias vcpkg-listmissing      ListMissingDepsInZipsDir
+set-alias vcpkg-pruneincomplete  PruneIncompleteZips
 
-export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg,    vcpkg-list,     vcpkg-listmissing `
-                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg, ListVcpkgPorts, ListMissingDepsInZipsDir
+export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg,    vcpkg-list,     vcpkg-listmissing,       vcpkg-pruneincomplete `
+                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg, ListVcpkgPorts, ListMissingDepsInZipsDir, PruneIncompleteZips

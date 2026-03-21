@@ -10,6 +10,7 @@
     - [`vcpkg-mkpkg <pkg>:<triplet>`](#vcpkg-mkpkg-pkgtriplet)
     - [`vcpkg-instpkg [<package.zip>|<directory>]`](#vcpkg-instpkg-packagezipdirectory)
     - [`vcpkg-listmissing <directory>`](#vcpkg-listmissing-directory)
+    - [`vcpkg-pruneincomplete [<directory>]`](#vcpkg-pruneincomplete-directory)
     - [`vcpkg-rmpkg <pkg>:<triplet>`](#vcpkg-rmpkg-pkgtriplet)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -81,6 +82,20 @@ installed in dependency order.
 Lists missing dependencies in the package set in the given directory. This is
 normal for e.g. host build dependencies such as `vcpkg-cmake` for a non-host
 triplet such as `-static`.
+
+#### `vcpkg-pruneincomplete [<directory>]`
+
+Removes packages from the given directory (default: current directory) whose
+dependencies cannot be fully satisfied. A dependency is satisfied if it is
+either present as a `.zip` in the directory or already installed in vcpkg.
+
+Removal cascades: if removing a package causes another package's dependencies
+to become incomplete, that package is removed as well. Returns the list of
+removed zip filenames.
+
+This is useful to ensure that only complete dependency sets are installed, since
+vcpkg considers the package database corrupt if any dependency in the graph is
+missing.
 
 #### `vcpkg-rmpkg <pkg>:<triplet>`
 
