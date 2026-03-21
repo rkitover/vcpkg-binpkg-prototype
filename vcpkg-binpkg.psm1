@@ -253,10 +253,17 @@ function order_zips_by_depends {
     $zips = [ordered]@{}
 
     foreach ($pkg in $input) {
-        $control = read_control $pkg | ?{ $_.feature -eq 'core' }
+        $control = read_control $pkg
         (split-path -leaf $pkg) -match '^[^_]+_[^_]+_(.+)\.zip$' > $null
         $triplet = $matches[1]
-        $zips[$pkg] = ($control.depends -split ', ') | ? length | %{ if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ } }
+        # Collect deps from ALL features, not just core.
+        $all_deps = @()
+        foreach ($entry in $control) {
+            if ($entry.depends) {
+                $all_deps += ($entry.depends -split ', ') | ? length
+            }
+        }
+        $zips[$pkg] = $all_deps | %{ if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ } }
     }
     
     $ordered = [ordered]@{}
@@ -296,25 +303,36 @@ function missing_deps_in_zips {
     $default_triplet = $null
 
     foreach ($pkg in $input) {
-        $control = read_control $pkg | ?{ $_.feature -eq 'core' }
+        $control = read_control $pkg
         (split-path -leaf $pkg) -match '^([^_]+)_[^_]+_(.+)\.zip$' > $null
         $pkg_name = $matches[1]
         $triplet  = $matches[2]
         if (-not $default_triplet) { $default_triplet = $triplet }
-        $pkgs["${pkg_name}:${triplet}"] = ($control.depends -split ', ') | ? length | %{ if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ } }
+        # Collect deps from ALL features, not just core.
+        $all_deps = @()
+        foreach ($entry in $control) {
+            if ($entry.depends) {
+                $all_deps += ($entry.depends -split ', ') | ? length
+            }
+        }
+        $pkgs["${pkg_name}:${triplet}"] = $all_deps | %{ if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ } }
     }
 
     $missing = [ordered]@{}
 
     foreach ($pkg in $pkgs.keys) {
+        ($pkg_name) = $pkg -split ':'
         $deps = $pkgs[$pkg]
-        
+
         if (-not $deps) { continue }
 
         foreach ($dep in $deps) {
             if ($dep -notmatch ':') {
                 $dep = "${dep}:${default_triplet}"
             }
+
+            # Skip self-references (feature deps on own package).
+            if (($dep -split ':')[0] -eq $pkg_name) { continue }
 
             if (-not $pkgs.contains($dep)) {
                 $missing[$dep] = $true
