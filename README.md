@@ -85,13 +85,12 @@ triplet such as `-static`.
 
 #### `vcpkg-pruneincomplete [<directory>]`
 
-Removes packages from the given directory (default: current directory) whose
+Prints packages in the given directory (default: current directory) whose
 dependencies cannot be fully satisfied. A dependency is satisfied if it is
 either present as a `.zip` in the directory or already installed in vcpkg.
 
-Removal cascades: if removing a package causes another package's dependencies
-to become incomplete, that package is removed as well. Returns the list of
-removed zip filenames.
+Cascades: if removing a package from the list causes another package's
+dependencies to become incomplete, that package is listed as well.
 
 This is useful to ensure that only complete dependency sets are installed, since
 vcpkg considers the package database corrupt if any dependency in the graph is

@@ -370,54 +370,52 @@ function PruneIncompleteZips($zips_dir) {
 
     $status_entries = read_status_file | ?{ $_.status -eq 'install ok installed' }
 
-    $removed = @()
+    # Build a virtual set of packages, removing incomplete ones iteratively
+    # until stable. Only outputs the list — does not delete files.
+    $remaining = [ordered]@{}
 
-    while ($true) {
-        $pkg_zips = [ordered]@{}
+    foreach ($zip in (gci $zips_dir -filter '*.zip' | % fullname)) {
+        $control = read_control $zip
+        (split-path -leaf $zip) -match '^([^_]+)_[^_]+_(.+)\.zip$' > $null
+        $pkg_name = $matches[1]
+        $triplet  = $matches[2]
 
-        foreach ($zip in (gci $zips_dir -filter '*.zip' | % fullname)) {
-            $control = read_control $zip
-            (split-path -leaf $zip) -match '^([^_]+)_[^_]+_(.+)\.zip$' > $null
-            $pkg_name = $matches[1]
-            $triplet  = $matches[2]
-
-            $all_deps = @()
-            foreach ($entry in $control) {
-                if ($entry.depends) {
-                    $all_deps += ($entry.depends -split ', ') | ? length
-                }
-            }
-
-            $qualified_deps = $all_deps | %{
-                if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ }
-            } | ?{
-                # Exclude self-references.
-                ($_ -split ':')[0] -ne $pkg_name
-            }
-
-            $pkg_zips["${pkg_name}:${triplet}"] = @{
-                zip  = $zip
-                deps = @($qualified_deps)
+        $all_deps = @()
+        foreach ($entry in $control) {
+            if ($entry.depends) {
+                $all_deps += ($entry.depends -split ', ') | ? length
             }
         }
 
+        $qualified_deps = $all_deps | %{
+            if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ }
+        } | ?{
+            ($_ -split ':')[0] -ne $pkg_name
+        }
+
+        $remaining["${pkg_name}:${triplet}"] = @{
+            zip  = split-path -leaf $zip
+            deps = @($qualified_deps)
+        }
+    }
+
+    $incomplete = @()
+
+    while ($true) {
         $to_remove = @()
 
-        foreach ($pkg in @($pkg_zips.keys)) {
-            foreach ($dep in $pkg_zips[$pkg].deps) {
+        foreach ($pkg in @($remaining.keys)) {
+            foreach ($dep in $remaining[$pkg].deps) {
                 if ($dep -notmatch '^([^:]+):(.+)$') { continue }
                 $dep_name    = $matches[1]
                 $dep_triplet = $matches[2]
 
-                # Present as a zip in the set?
-                if ($pkg_zips.contains($dep)) { continue }
+                if ($remaining.contains($dep)) { continue }
 
-                # Already installed in vcpkg?
                 if ($status_entries | ?{
                     $_.package -eq $dep_name -and $_.architecture -eq $dep_triplet
                 }) { continue }
 
-                # Unresolvable dep.
                 $to_remove += $pkg
                 break
             }
@@ -426,14 +424,12 @@ function PruneIncompleteZips($zips_dir) {
         if (-not $to_remove.count) { break }
 
         foreach ($pkg in $to_remove) {
-            $zip_name = split-path -leaf $pkg_zips[$pkg].zip
-            "Removing $zip_name (has unresolvable dependencies)"
-            remove-item $pkg_zips[$pkg].zip
-            $removed += $zip_name
+            $incomplete += $remaining[$pkg].zip
+            $remaining.remove($pkg)
         }
     }
 
-    $removed
+    $incomplete
 }
 
 function InstallVcpkgPkgZip($zips) {
@@ -453,13 +449,21 @@ function InstallVcpkgPkgZip($zips) {
         }
     }
 
-    $zips = if (test-path -pathtype leaf $zips) { (resolve-path $zips).path } `
-            else { gci $zips -filter '*.zip' | % fullname | order_zips_by_depends }
-    
+    if (test-path -pathtype leaf $zips) {
+        $zips = @((resolve-path $zips).path)
+    }
+    else {
+        # Filter out packages with incomplete dependencies.
+        $incomplete = PruneIncompleteZips $zips
+        $zips = gci $zips -filter '*.zip' | % fullname | ?{
+            (split-path -leaf $_) -notin $incomplete
+        } | order_zips_by_depends
+    }
+
     if (-not $zips) {
         write-error -ea stop 'No packages to install'
     }
-    
+
     foreach ($zip_file in $zips) {
         ($pkg, $version, $triplet) = ((split-path -leaf $zip_file) -replace '\.zip$','') -split '_'
 
