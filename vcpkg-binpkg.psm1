@@ -103,9 +103,15 @@ function WriteVcpkgPkgZip {
 
     $cwd = $PWD
 
-    pushd $env:VCPKG_ROOT
+    $status_entries = read_status_file | ?{
+        $_.Package -eq $pkg -and $_.Architecture -eq $triplet
+    }
 
-    if (-not ($file_list = file_list $pkg $triplet)) {
+    $pkg_ver = $status_entries | ?{ $_.Feature -eq 'core' } | % Version
+
+    pushd $env:VCPKG_ROOT
+    
+    if (-not ($file_list = file_list $pkg $pkg_ver $triplet)) {
         write-error -ea stop "${pkg}:$triplet is not installed"
     }
 
@@ -113,10 +119,6 @@ function WriteVcpkgPkgZip {
 
     # Make CONTROL file.
     $control_file = new-temporaryfile
-
-    $status_entries = read_status_file | where-object {
-        $_.Package -eq $pkg -and $_.Architecture -eq $triplet
-    }
 
     &{foreach ($entry in $status_entries) {
         "Feature: " + $(if ($entry.Feature) { $entry.Feature } else { 'core' })
@@ -183,9 +185,9 @@ function WriteVcpkgPkgZip {
     'done.'
 }
 
-function file_list([string]$package, [string]$triplet) {
+function file_list([string]$package, [string]$version, [string]$triplet) {
     (resolve-path -relative `
-        installed/vcpkg/info/${pkg}_*${triplet}.list -ea ignore `
+        installed/vcpkg/info/${pkg}_${version}_${triplet}.list -ea ignore `
     ) -replace '\\', '/'
 }
 
@@ -202,9 +204,13 @@ function RemoveVcpkgPkg {
 
     ($pkg, $triplet) = $qualified_package -split ':'
 
+    $pkg_ver = read_status_file | ?{
+        $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and $_.Feature -eq 'core'
+    }
+
     pushd $env:VCPKG_ROOT
 
-    if (-not ($file_list = file_list $pkg $triplet)) {
+    if (-not ($file_list = file_list $pkg $pkg_ver $triplet)) {
         write-error -ea stop "${pkg}:$triplet is not installed"
     }
 
@@ -505,7 +511,7 @@ function InstallVcpkgPkgZip($zips) {
 
         pushd $env:VCPKG_ROOT
 
-        if (file_list $pkg $triplet) {
+        if (file_list $pkg $version $triplet) {
             RemoveVcpkgPkg "${pkg}:$triplet"
         }
 
