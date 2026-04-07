@@ -438,6 +438,51 @@ function PruneIncompleteZips($zips_dir) {
     $incomplete
 }
 
+function VcpkgListDeps {
+    param(
+        [validatescript({
+            if ($_ -notmatch ':') { throw 'Package must be of the form <pkg>:<triplet>' }
+            return $true
+        })]
+        [string]$qualified_package
+    )
+
+    check_env
+
+    ($pkg, $triplet) = $qualified_package -split ':'
+
+    $status_entries = read_status_file | ?{
+        $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and $_.Status -eq 'install ok installed'
+    }
+
+    if (-not $status_entries) {
+        write-error -ea stop "${pkg}:$triplet is not installed"
+    }
+
+    $deps = [ordered]@{}
+
+    foreach ($entry in $status_entries) {
+        if (-not $entry.Depends) { continue }
+
+        foreach ($dep in ($entry.Depends -split ', ' | ? length)) {
+            # Strip feature qualifiers like [feature1, feature2]
+            $dep = $dep -replace '\[[^\]]*\]',''
+
+            # Add triplet if missing
+            if ($dep -notmatch ':') {
+                $dep = "${dep}:$triplet"
+            }
+
+            # Skip self-references (feature deps on own package).
+            if (($dep -split ':')[0] -eq $pkg) { continue }
+
+            $deps[$dep] = $true
+        }
+    }
+
+    $deps.keys
+}
+
 function InstallVcpkgPkgZip($zips) {
     check_env
     
@@ -670,6 +715,7 @@ set-alias vcpkg-instpkg          InstallVcpkgPkgZip
 set-alias vcpkg-list             ListVcpkgPorts
 set-alias vcpkg-listmissing      ListMissingDepsInZipsDir
 set-alias vcpkg-pruneincomplete  PruneIncompleteZips
+set-alias vcpkg-listdeps         VcpkgListDeps
 
-export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg,    vcpkg-list,     vcpkg-listmissing,       vcpkg-pruneincomplete `
-                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg, ListVcpkgPorts, ListMissingDepsInZipsDir, PruneIncompleteZips
+export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg,    vcpkg-list,     vcpkg-listmissing,       vcpkg-pruneincomplete,  vcpkg-listdeps `
+                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg, ListVcpkgPorts, ListMissingDepsInZipsDir, PruneIncompleteZips, VcpkgListDeps

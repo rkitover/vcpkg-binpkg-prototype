@@ -11,6 +11,7 @@
     - [`vcpkg-instpkg [<package.zip>|<directory>]`](#vcpkg-instpkg-packagezipdirectory)
     - [`vcpkg-listmissing <directory>`](#vcpkg-listmissing-directory)
     - [`vcpkg-pruneincomplete [<directory>]`](#vcpkg-pruneincomplete-directory)
+    - [`vcpkg-listdeps <pkg>:<triplet>`](#vcpkg-listdeps-pkgtriplet)
     - [`vcpkg-rmpkg <pkg>:<triplet>`](#vcpkg-rmpkg-pkgtriplet)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -95,6 +96,13 @@ dependencies to become incomplete, that package is listed as well.
 This is useful to ensure that only complete dependency sets are installed, since
 vcpkg considers the package database corrupt if any dependency in the graph is
 missing.
+
+#### `vcpkg-listdeps <pkg>:<triplet>`
+
+Lists all core and feature dependencies of an installed package, one per line,
+each qualified as `<pkg>:<triplet>`. Bare dependencies inherit the parent
+package's triplet, feature qualifiers (e.g. `[ssl]`) are stripped, and
+self-references between features of the same port are omitted.
 
 #### `vcpkg-rmpkg <pkg>:<triplet>`
 
