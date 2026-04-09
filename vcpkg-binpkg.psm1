@@ -253,7 +253,7 @@ function WriteVcpkgPkgZip {
                 # Serialize dep objects; host deps get a ${HOST} triplet so
                 # the CONTROL file is portable across host architectures.
                 $value = ($value | %{
-                    if ($_.host_dep) { "$_" -replace ':.*$','' + ':${HOST}' }
+                    if ($_.host_dep) { ("$_" -replace ':.*$','') + ':${HOST}' }
                     else             { "$_" }
                 }) -join ', '
             }
