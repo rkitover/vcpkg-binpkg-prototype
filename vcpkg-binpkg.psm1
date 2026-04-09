@@ -45,12 +45,129 @@ function read_db {
     if ($entry.count) { $entry }
 }
 
+function find_port_dir([string]$pkg) {
+    # Check overlay ports first.
+    if ($env:VCPKG_OVERLAY_PORTS) {
+        $sep = if ($iswindows) { ';' } else { ':' }
+        foreach ($overlay in ($env:VCPKG_OVERLAY_PORTS -split [regex]::escape($sep) | ? length)) {
+            $candidate = join-path $overlay $pkg
+            if (test-path -pathtype container $candidate) {
+                return $candidate
+            }
+        }
+    }
+
+    $main = join-path $env:VCPKG_ROOT "ports/$pkg"
+    if (test-path -pathtype container $main) {
+        return $main
+    }
+
+    return $null
+}
+
+function read_port_manifest([string]$pkg) {
+    $port_dir = find_port_dir $pkg
+    if (-not $port_dir) { return $null }
+
+    $manifest_path = join-path $port_dir 'vcpkg.json'
+    if (-not (test-path -pathtype leaf $manifest_path)) { return $null }
+
+    return get-content -raw $manifest_path | convertfrom-json
+}
+
+# Build a map of dep_name -> $true/$false (host_dep) for the given feature of
+# a parsed vcpkg.json manifest. Returns an empty hashtable if the manifest is
+# missing or doesn't list the feature.
+function dep_host_map($manifest, [string]$feature) {
+    $map = @{}
+    if (-not $manifest) { return $map }
+
+    $deps = if (-not $feature) {
+        $manifest.dependencies
+    } elseif ($manifest.PSObject.Properties['features'] -and $manifest.features.PSObject.Properties[$feature]) {
+        $manifest.features.$feature.dependencies
+    }
+
+    foreach ($d in $deps) {
+        if ($d -is [string]) {
+            $map[$d] = $false
+        } elseif ($d.PSObject.Properties['name']) {
+            $is_host = $false
+            if ($d.PSObject.Properties['host']) { $is_host = [bool]$d.host }
+            $map[$d.name] = $is_host
+        }
+    }
+
+    return $map
+}
+
+# Wraps a single dependency entry from a status file's Depends field as a
+# PSCustomObject that stringifies to the original dep string but exposes a
+# boolean host_dep property sourced from the port's vcpkg.json.
+function make_dep_object([string]$dep_string, [bool]$host_dep) {
+    $obj = [pscustomobject]@{
+        host_dep = $host_dep
+    }
+    $obj | add-member -membertype noteproperty -name _str -value $dep_string
+    $obj | add-member -membertype scriptmethod -name ToString -value { $this._str } -force
+    return $obj
+}
+
 function read_status_file {
     [array]$entries = read_db(get-content (join-path $env:VCPKG_ROOT installed/vcpkg/status) -ea ignore)
 
+    # Cache parsed port manifests across status entries (one port can have
+    # several entries — one per feature).
+    $manifest_cache = @{}
+
     foreach ($entry in $entries) {
         if (-not $entry.contains('Feature')) {
-            $entry['Feature'] = 'core'
+            $entry['Feature'] = ''
+        }
+
+        if (-not $entry.Depends) { continue }
+
+        $pkg = $entry.Package
+        if (-not $manifest_cache.contains($pkg)) {
+            $manifest_cache[$pkg] = read_port_manifest $pkg
+        }
+        $host_map = dep_host_map $manifest_cache[$pkg] $entry.Feature
+
+        $entry.Depends = @(foreach ($dep in ($entry.Depends -split ', ' | ? length)) {
+            # Match by base name (strip [features] and any :triplet suffix).
+            $base = $dep -replace '\[[^\]]*\]','' -replace ':.*$',''
+            $is_host = if ($host_map.contains($base)) { $host_map[$base] } else { $false }
+            make_dep_object $dep $is_host
+        })
+    }
+
+    # Second pass: for each package, collect the union of dep base names marked
+    # host_dep across core and all features, then propagate host_dep=$true to
+    # every occurrence of those dep names across all features.  This handles
+    # manifests that are inconsistent — e.g. marking a dep host in one feature
+    # but not in another.
+    $pkg_host_bases = @{}
+
+    foreach ($entry in $entries) {
+        if (-not $entry.Depends) { continue }
+        $pkg = $entry.Package
+        foreach ($dep in $entry.Depends) {
+            if ($dep.host_dep) {
+                $base = "$dep" -replace '\[[^\]]*\]','' -replace ':.*$',''
+                if (-not $pkg_host_bases.contains($pkg)) { $pkg_host_bases[$pkg] = @{} }
+                $pkg_host_bases[$pkg][$base] = $true
+            }
+        }
+    }
+
+    foreach ($entry in $entries) {
+        if (-not $entry.Depends) { continue }
+        $host_bases = $pkg_host_bases[$entry.Package]
+        if (-not $host_bases) { continue }
+        foreach ($dep in $entry.Depends) {
+            if ($dep.host_dep) { continue }
+            $base = "$dep" -replace '\[[^\]]*\]','' -replace ':.*$',''
+            if ($host_bases.contains($base)) { $dep.host_dep = $true }
         }
     }
 
@@ -64,8 +181,15 @@ function write_status_file {
 
     $entries | %{
         foreach ($key in $_.keys) {
-            if (-not ($key -eq 'Feature' -and $_[$key] -eq 'core')) {
-                "${key}: " + $_[$key]
+            if (-not ($key -eq 'Feature' -and -not $_[$key])) {
+                $value = $_[$key]
+                # Depends may have been wrapped by read_status_file as an
+                # array of dep PSCustomObjects — re-join them as the
+                # comma-separated string format the status file expects.
+                if ($key -eq 'Depends' -and $value -is [array]) {
+                    $value = ($value | %{ $_.ToString() }) -join ', '
+                }
+                "${key}: " + $value
             }
         }
         ''
@@ -79,7 +203,7 @@ function read_port_control_file([string]$package) {
 
     [array]$control = foreach ($entry in $entries) {
         [ordered]@{
-            'Feature'     = if ($entry.Feature)  { $entry.Feature } else { 'core' };
+            'Feature'     = $entry.Feature;
             'Description' = $entry.Description;
             'Depends'     = $entry['Build-Depends'];
         }
@@ -107,7 +231,7 @@ function WriteVcpkgPkgZip {
         $_.Package -eq $pkg -and $_.Architecture -eq $triplet
     }
 
-    $pkg_ver = $status_entries | ?{ $_.Feature -eq 'core' } | % Version
+    $pkg_ver = $status_entries | ?{ -not $_.Feature } | % Version
 
     pushd $env:VCPKG_ROOT
     
@@ -121,12 +245,21 @@ function WriteVcpkgPkgZip {
     $control_file = new-temporaryfile
 
     &{foreach ($entry in $status_entries) {
-        "Feature: " + $(if ($entry.Feature) { $entry.Feature } else { 'core' })
+        "Feature: " + $entry.Feature
 
         foreach ($key in 'Version', 'Depends', 'Abi', 'Description') {
-            "${key}: " + $entry[$key]
+            $value = $entry[$key]
+            if ($key -eq 'Depends' -and $value -is [array]) {
+                # Serialize dep objects; host deps get a ${HOST} triplet so
+                # the CONTROL file is portable across host architectures.
+                $value = ($value | %{
+                    if ($_.host_dep) { "$_" -replace ':.*$','' + ':${HOST}' }
+                    else             { "$_" }
+                }) -join ', '
+            }
+            "${key}: " + $value
         }
-        
+
         if ($entry.contains('Port-Version')) {
             "Port-Version: " + $entry['Port-Version']
         }
@@ -136,7 +269,7 @@ function WriteVcpkgPkgZip {
     
     $zip_file = (split-path -leaf $file_list) -replace '\.list$',''
     
-    if ($revision = ($status_entries | ?{ $_.feature -eq 'core' })['Port-Version']) {
+    if ($revision = ($status_entries | ?{ -not $_.feature })['Port-Version']) {
         $zip_file = $zip_file -replace '^([^_]+)_([^_]+)_',('${1}_$2' + "-r${revision}_")
     }
     
@@ -205,7 +338,7 @@ function RemoveVcpkgPkg {
     ($pkg, $triplet) = $qualified_package -split ':'
 
     $pkg_ver = read_status_file | ?{
-        $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and $_.Feature -eq 'core'
+        $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and -not $_.Feature
     }
 
     pushd $env:VCPKG_ROOT
@@ -237,12 +370,29 @@ function RemoveVcpkgPkg {
 }
 
 function read_control($zip) {
-    $zip = [System.IO.Compression.ZipFile]::OpenRead($zip);
+    $zip_path = $zip
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($zip)
     $zip.entries | ?{ $_.fullname -eq 'CONTROL' } | %{
         $control_text = (new-object System.IO.StreamReader($_.Open())).ReadToEnd()
     }
     $zip.dispose()
-    read_db($control_text -split '\r?\n')
+
+    # Resolve the ${HOST} placeholder written for host deps at pack time.
+    if ($control_text -match '\$\{HOST\}') {
+        if ((split-path -leaf $zip_path) -match '^[^_]+_[^_]+_(.+)\.zip$') {
+            $control_text = $control_text -replace '\$\{HOST\}', (host_triplet $matches[1])
+        }
+    }
+
+    $entries = read_db($control_text -split '\r?\n')
+
+    # Backward compat: old packages were packed with "Feature: core" for the
+    # main entry; normalise to empty to match the real status file format.
+    foreach ($entry in $entries) {
+        if ($entry['Feature'] -eq 'core') { $entry['Feature'] = '' }
+    }
+
+    $entries
 }
 
 function read_symlinks($zip) {
@@ -438,49 +588,103 @@ function PruneIncompleteZips($zips_dir) {
     $incomplete
 }
 
+function host_triplet([string]$target_triplet) {
+    if ($iswindows) { return 'x64-windows' }
+    if ($islinux)   { return 'x64-linux' }
+    if ($ismacos)   { return 'x64-osx' }
+    return $target_triplet -replace '(-static|-dynamic|-release|-md)',''
+}
+
+function get_pkg_deps([string[]]$qualified_packages) {
+    # Accept comma- and/or space-separated packages.
+    $packages = $qualified_packages -split '[,\s]+' | ? length
+
+    if (-not $packages) {
+        write-error -ea stop 'At least one package of the form <pkg>:<triplet> is required'
+    }
+
+    foreach ($qp in $packages) {
+        if ($qp -notmatch ':') {
+            write-error -ea stop "Package '$qp' must be of the form <pkg>:<triplet>"
+        }
+    }
+
+    $status_file = read_status_file
+
+    $target_deps = [ordered]@{}
+    $host_deps   = [ordered]@{}
+
+    foreach ($qualified_package in $packages) {
+        ($pkg, $triplet) = $qualified_package -split ':'
+
+        $status_entries = $status_file | ?{
+            $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and $_.Status -eq 'install ok installed'
+        }
+
+        if (-not $status_entries) {
+            write-error -ea stop "${pkg}:$triplet is not installed"
+        }
+
+        $host = host_triplet $triplet
+
+        foreach ($entry in $status_entries) {
+            if (-not $entry.Depends) { continue }
+
+            foreach ($dep_obj in $entry.Depends) {
+                # The dep object stringifies to its original Depends entry.
+                # Strip feature qualifiers like [feature1, feature2].
+                $dep = "$dep_obj" -replace '\[[^\]]*\]',''
+
+                # host_dep was sourced from the port's vcpkg.json by
+                # read_status_file.
+                $is_host = $dep_obj.host_dep
+
+                if ($dep -notmatch ':') {
+                    $dep_triplet = if ($is_host) { $host } else { $triplet }
+                    $dep = "${dep}:$dep_triplet"
+                }
+
+                # Skip self-references (feature deps on own package).
+                if (($dep -split ':')[0] -eq $pkg) { continue }
+
+                if ($is_host) {
+                    $host_deps[$dep] = $true
+                } else {
+                    $target_deps[$dep] = $true
+                }
+            }
+        }
+    }
+
+    @{
+        target = $target_deps
+        host   = $host_deps
+    }
+}
+
 function VcpkgListDeps {
     param(
-        [validatescript({
-            if ($_ -notmatch ':') { throw 'Package must be of the form <pkg>:<triplet>' }
-            return $true
-        })]
-        [string]$qualified_package
+        [parameter(valuefromremainingarguments=$true)]
+        [string[]]$qualified_packages
     )
 
     check_env
 
-    ($pkg, $triplet) = $qualified_package -split ':'
+    $deps = get_pkg_deps $qualified_packages
+    $deps.target.keys
+    $deps.host.keys
+}
 
-    $status_entries = read_status_file | ?{
-        $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and $_.Status -eq 'install ok installed'
-    }
+function VcpkgListHostDeps {
+    param(
+        [parameter(valuefromremainingarguments=$true)]
+        [string[]]$qualified_packages
+    )
 
-    if (-not $status_entries) {
-        write-error -ea stop "${pkg}:$triplet is not installed"
-    }
+    check_env
 
-    $deps = [ordered]@{}
-
-    foreach ($entry in $status_entries) {
-        if (-not $entry.Depends) { continue }
-
-        foreach ($dep in ($entry.Depends -split ', ' | ? length)) {
-            # Strip feature qualifiers like [feature1, feature2]
-            $dep = $dep -replace '\[[^\]]*\]',''
-
-            # Add triplet if missing
-            if ($dep -notmatch ':') {
-                $dep = "${dep}:$triplet"
-            }
-
-            # Skip self-references (feature deps on own package).
-            if (($dep -split ':')[0] -eq $pkg) { continue }
-
-            $deps[$dep] = $true
-        }
-    }
-
-    $deps.keys
+    # Strip the triplet — host deps are all for the host tool architecture.
+    (get_pkg_deps $qualified_packages).host.keys | %{ ($_ -split ':')[0] }
 }
 
 function InstallVcpkgPkgZip($zips) {
@@ -530,14 +734,12 @@ function InstallVcpkgPkgZip($zips) {
 
         # Install build deps
 
-        $deps = $control_entries | ?{ $_.feature -eq 'core' } | %{ $_.depends -split ', ' } | ?{ $_ -match '^vcpkg-' }
+        $host_triplet = host_triplet $triplet
 
-        $host_triplet = if ($iswindows) { 'x64-windows' }
-                        elseif ($islinux) { 'x64-linux' }
-                        elseif ($ismacos) { 'x64-osx' }
-                        else { $triplet -replace '(-static|-dynamic|-release|-md)','' }
+        $deps = $control_entries | ?{ -not $_.feature } | %{ $_.depends -split ', ' | ? length } | ?{
+            $_ -match ':' -and ($_ -split ':')[-1] -eq $host_triplet
+        }
 
-        
         foreach ($build_dep in $deps) {
             $build_dep -match '^([^:]+):?(.*)' > $null
             $build_dep,$build_dep_triplet = $matches[1,2]
@@ -604,7 +806,7 @@ function InstallVcpkgPkgZip($zips) {
 
             $status_entry.Package = $pkg
 
-            if ($control.Feature -eq 'core') {
+            if (-not $control.Feature) {
                 $status_entry.Version = $version
 
                 if ($revision) {
@@ -668,7 +870,6 @@ function ListVcpkgPorts([string]$pattern) {
     if (-not $pattern.length) { $pattern = '' }
 
     $status_entries  = read_status_file `
-        | %{ if ($_.feature -eq 'core') { $_.feature = '' }; $_ } `
         | ?{ $_.status -eq 'install ok installed' } `
         | ?{ $_.package -match $pattern } `
         | sort-object { $_.package,$_.feature,$_.architecture }
@@ -716,6 +917,7 @@ set-alias vcpkg-list             ListVcpkgPorts
 set-alias vcpkg-listmissing      ListMissingDepsInZipsDir
 set-alias vcpkg-pruneincomplete  PruneIncompleteZips
 set-alias vcpkg-listdeps         VcpkgListDeps
+set-alias vcpkg-listhostdeps     VcpkgListHostDeps
 
-export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg,    vcpkg-list,     vcpkg-listmissing,       vcpkg-pruneincomplete,  vcpkg-listdeps `
-                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg, ListVcpkgPorts, ListMissingDepsInZipsDir, PruneIncompleteZips, VcpkgListDeps
+export-modulemember -alias    vcpkg-mkpkg,      vcpkg-instpkg,      vcpkg-rmpkg,    vcpkg-list,     vcpkg-listmissing,       vcpkg-pruneincomplete,  vcpkg-listdeps, vcpkg-listhostdeps `
+                    -function WriteVcpkgPkgZip, InstallVcpkgPkgZip, RemoveVcpkgPkg, ListVcpkgPorts, ListMissingDepsInZipsDir, PruneIncompleteZips, VcpkgListDeps, VcpkgListHostDeps

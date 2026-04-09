@@ -11,7 +11,8 @@
     - [`vcpkg-instpkg [<package.zip>|<directory>]`](#vcpkg-instpkg-packagezipdirectory)
     - [`vcpkg-listmissing <directory>`](#vcpkg-listmissing-directory)
     - [`vcpkg-pruneincomplete [<directory>]`](#vcpkg-pruneincomplete-directory)
-    - [`vcpkg-listdeps <pkg>:<triplet>`](#vcpkg-listdeps-pkgtriplet)
+    - [`vcpkg-listdeps <pkg>:<triplet> [<pkg>:<triplet> ...]`](#vcpkg-listdeps-pkgtriplet-pkgtriplet-)
+    - [`vcpkg-listhostdeps <pkg>:<triplet> [<pkg>:<triplet> ...]`](#vcpkg-listhostdeps-pkgtriplet-pkgtriplet-)
     - [`vcpkg-rmpkg <pkg>:<triplet>`](#vcpkg-rmpkg-pkgtriplet)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -97,12 +98,22 @@ This is useful to ensure that only complete dependency sets are installed, since
 vcpkg considers the package database corrupt if any dependency in the graph is
 missing.
 
-#### `vcpkg-listdeps <pkg>:<triplet>`
+#### `vcpkg-listdeps <pkg>:<triplet> [<pkg>:<triplet> ...]`
 
-Lists all core and feature dependencies of an installed package, one per line,
-each qualified as `<pkg>:<triplet>`. Bare dependencies inherit the parent
-package's triplet, feature qualifiers (e.g. `[ssl]`) are stripped, and
-self-references between features of the same port are omitted.
+Lists target (non-host) core and feature dependencies of one or more installed
+packages, one per line, each qualified as `<pkg>:<triplet>`. Multiple packages
+may be passed as separate arguments or as a single comma- and/or space-separated
+string; the combined dependency set is deduplicated. Bare dependencies inherit
+the parent package's triplet, feature qualifiers (e.g. `[ssl]`) are stripped,
+self-references between features of the same port are omitted, and host build
+tools (`vcpkg-*`) are excluded — use `vcpkg-listhostdeps` for those.
+
+#### `vcpkg-listhostdeps <pkg>:<triplet> [<pkg>:<triplet> ...]`
+
+Like `vcpkg-listdeps`, but lists only the host build-tool dependencies (the
+`vcpkg-*` packages that run on the host triplet, e.g. `x64-windows` when
+cross-compiling to `arm64-windows-static`). Output is unqualified by triplet,
+since all entries belong to the host tool architecture.
 
 #### `vcpkg-rmpkg <pkg>:<triplet>`
 
