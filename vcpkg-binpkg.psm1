@@ -922,9 +922,17 @@ function common_prefix($a, $b) {
 function ListVcpkgPorts([string]$pattern) {
     if (-not $pattern.length) { $pattern = '' }
 
-    $status_entries  = read_status_file `
-        | ?{ $_.status -eq 'install ok installed' } `
+    $installed = read_status_file | ?{ $_.status -eq 'install ok installed' }
+
+    $installed_cores = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase)
+    $installed | ?{ -not $_.feature } | %{
+        $installed_cores.add("$($_.package):$($_.architecture)") | out-null
+    }
+
+    $status_entries = $installed `
         | ?{ $_.package -match $pattern } `
+        | ?{ -not $_.feature -or $installed_cores.contains("$($_.package):$($_.architecture)") } `
         | sort-object { $_.package,$_.feature,$_.architecture }
 
 #    for ($i = 0; $i -lt $status_entries.length - 1; $i++) {
