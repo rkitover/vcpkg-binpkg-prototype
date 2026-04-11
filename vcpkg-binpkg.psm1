@@ -72,7 +72,12 @@ function read_port_manifest([string]$pkg) {
     $manifest_path = join-path $port_dir 'vcpkg.json'
     if (-not (test-path -pathtype leaf $manifest_path)) { return $null }
 
-    return get-content -raw $manifest_path | convertfrom-json
+    $content = get-content -raw $manifest_path
+    try { return $content | convertfrom-json }
+    catch {
+        write-warning "read_port_manifest: failed to parse $manifest_path`: $_"
+        return $null
+    }
 }
 
 # Build a map of dep_name -> $true/$false (host_dep) for the given feature of
