@@ -593,10 +593,19 @@ function PruneIncompleteZips($zips_dir) {
     $incomplete
 }
 
+function native_arch {
+    switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+        'Arm64' { return 'arm64' }
+        'X64'   { return 'x64' }
+        default { return 'x64' }
+    }
+}
+
 function host_triplet([string]$target_triplet) {
-    if ($iswindows) { return 'x64-windows' }
-    if ($islinux)   { return 'x64-linux' }
-    if ($ismacos)   { return 'x64-osx' }
+    $arch = native_arch
+    if ($iswindows) { return "$arch-windows" }
+    if ($islinux)   { return "$arch-linux" }
+    if ($ismacos)   { return "$arch-osx" }
     return $target_triplet -replace '(-static|-dynamic|-release|-md)',''
 }
 
