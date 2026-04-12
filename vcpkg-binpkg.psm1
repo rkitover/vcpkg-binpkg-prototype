@@ -699,45 +699,47 @@ function VcpkgListHostDeps {
 
     $direct_host_deps = (get_pkg_deps $qualified_packages).host
 
-    # BFS over the host-dep graph to collect transitive host deps. Once a
-    # package is a host dep, every package it depends on must also be
-    # present on the host (so it can run), so we follow all dependency
-    # edges inside the host-dep graph — not just those flagged host_dep.
+    # Recursively collect transitive host deps. Once a package is a host
+    # dep, every package it depends on must also be present on the host
+    # (so it can run), so we follow all dependency edges inside the
+    # host-dep graph — not just those flagged host_dep.
     $status_file = read_status_file
+    $visited     = @{}
 
-    $visited = [System.Collections.Generic.HashSet[string]]::new(
-        [System.StringComparer]::OrdinalIgnoreCase)
-    $queue   = [System.Collections.Generic.Queue[string]]::new()
-
-    foreach ($dep in $direct_host_deps.keys) {
-        if ($visited.add($dep)) { $queue.enqueue($dep) }
-    }
-
-    while ($queue.count) {
-        $qp = $queue.dequeue()
+    $visit = $null
+    $visit = {
+        param($qp)
         ($dep_pkg, $dep_triplet) = $qp -split ':'
 
-        $entries = $status_file | ?{
+        $status_file | ?{
             $_.Package      -eq $dep_pkg     -and
             $_.Architecture -eq $dep_triplet -and
             $_.Status       -eq 'install ok installed'
-        }
-
-        foreach ($entry in $entries) {
-            if (-not $entry.Depends) { continue }
-            foreach ($dep_obj in $entry.Depends) {
+        } | %{
+            if (-not $_.Depends) { return }
+            foreach ($dep_obj in $_.Depends) {
                 $transitive = "$dep_obj" -replace '\[[^\]]*\]',''
                 if ($transitive -notmatch ':') {
                     $transitive = "${transitive}:$dep_triplet"
                 }
                 if (($transitive -split ':')[0] -eq $dep_pkg) { continue }
-                if ($visited.add($transitive)) { $queue.enqueue($transitive) }
+                if (-not $visited[$transitive]) {
+                    $visited[$transitive] = $true
+                    &$visit $transitive
+                }
             }
         }
     }
 
+    foreach ($dep in $direct_host_deps.keys) {
+        if (-not $visited[$dep]) {
+            $visited[$dep] = $true
+            &$visit $dep
+        }
+    }
+
     # Strip the triplet — host deps are all for the host tool architecture.
-    $visited | %{ ($_ -split ':')[0] }
+    $visited.keys | %{ ($_ -split ':')[0] }
 }
 
 function InstallVcpkgPkgZip($zips) {
@@ -924,15 +926,14 @@ function ListVcpkgPorts([string]$pattern) {
 
     $installed = read_status_file | ?{ $_.status -eq 'install ok installed' }
 
-    $installed_cores = [System.Collections.Generic.HashSet[string]]::new(
-        [System.StringComparer]::OrdinalIgnoreCase)
+    $installed_cores = @{}
     $installed | ?{ -not $_.feature } | %{
-        $installed_cores.add("$($_.package):$($_.architecture)") | out-null
+        $installed_cores["$($_.package):$($_.architecture)"] = $true
     }
 
     $status_entries = $installed `
         | ?{ $_.package -match $pattern } `
-        | ?{ -not $_.feature -or $installed_cores.contains("$($_.package):$($_.architecture)") } `
+        | ?{ -not $_.feature -or $installed_cores["$($_.package):$($_.architecture)"] } `
         | sort-object { $_.package,$_.feature,$_.architecture }
 
 #    for ($i = 0; $i -lt $status_entries.length - 1; $i++) {
