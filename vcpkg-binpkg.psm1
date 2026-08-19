@@ -325,7 +325,7 @@ function WriteVcpkgPkgZip {
 
 function file_list([string]$package, [string]$version, [string]$triplet) {
     (resolve-path -relative `
-        installed/vcpkg/info/${pkg}_${version}_${triplet}.list -ea ignore `
+        installed/vcpkg/info/${package}_${version}_${triplet}.list -ea ignore `
     ) -replace '\\', '/'
 }
 
@@ -344,7 +344,7 @@ function RemoveVcpkgPkg {
 
     $pkg_ver = read_status_file | ?{
         $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and -not $_.Feature
-    }
+    } | % Version
 
     pushd $env:VCPKG_ROOT
 
