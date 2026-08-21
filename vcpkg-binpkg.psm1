@@ -843,10 +843,30 @@ function InstallVcpkgPkgZip($zips) {
             $link   = $symlinks[$i]
             $target = $symlinks[$i+1]
 
+            $link_dir = split-path -parent $link
+
+            if (-not $link_dir) { $link_dir = '.' }
+
+            # Symlinks are not zip entries, so the loop above never created a
+            # directory whose only contents are symlinks. dbus ships its
+            # systemd unit .wants directories exactly that way.
+            if (-not (test-path $link_dir)) {
+                ni -it dir $link_dir > $null
+            }
+
             ni -it sym $link -tar $target -ea ignore > $null
 
             if (-not ((gi $link -ea ignore).linktarget)) {
-                cpi -force $target $link
+                # Copy instead, e.g. on Windows without the privilege to create
+                # symlinks. A link target is relative to the directory holding
+                # the link, not to the current one.
+                $target_path = if ([io.path]::isPathRooted($target)) {
+                    $target
+                } else {
+                    join-path $link_dir $target
+                }
+
+                cpi -force $target_path $link
             }
         }
 
