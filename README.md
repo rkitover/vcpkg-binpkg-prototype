@@ -115,6 +115,14 @@ Like `vcpkg-listdeps`, but lists only the host build-tool dependencies (the
 cross-compiling to `arm64-windows-static`). Output is unqualified by triplet,
 since all entries belong to the host tool architecture.
 
+A port that needs itself on the host counts: `qtbase:arm64-android` depends on
+`qtbase:<host>` for moc, and that is a host dependency, not a self-reference.
+
+`-Direct` lists only what the named packages themselves require on the host,
+without following what those requirements pull in. Use it when the host
+already has its own packages and only the cross build's additions are wanted:
+the full closure under a host Qt reaches the whole desktop stack.
+
 #### `vcpkg-rmpkg <pkg>:<triplet>`
 
 Removes the files for an installed vcpkg package, but **NOT** the status

@@ -93,13 +93,18 @@ function dep_host_map($manifest, [string]$feature) {
         $manifest.features.$feature.dependencies
     }
 
+    # A manifest can name the same dependency more than once, and only one of
+    # those entries need carry "host": true -- qtbase lists itself as a host
+    # dependency for moc and then again, platform-gated, for the target. The
+    # map is keyed by name, so OR the flags together rather than letting the
+    # last entry win and drop the host build off the port that needs it.
     foreach ($d in $deps) {
         if ($d -is [string]) {
-            $map[$d] = $false
+            $map[$d] = ($map[$d] -eq $true)
         } elseif ($d.PSObject.Properties['name']) {
             $is_host = $false
             if ($d.PSObject.Properties['host']) { $is_host = [bool]$d.host }
-            $map[$d.name] = $is_host
+            $map[$d.name] = $is_host -or ($map[$d.name] -eq $true)
         }
     }
 
@@ -658,8 +663,14 @@ function get_pkg_deps([string[]]$qualified_packages) {
                     $dep = "${dep}:$dep_triplet"
                 }
 
-                # Skip self-references (feature deps on own package).
-                if (($dep -split ':')[0] -eq $pkg) { continue }
+                # Skip self-references (feature deps on own package), which
+                # are the same port *and* the same triplet. A dependency on
+                # your own port for a different triplet is not one: that is
+                # what a host dependency on yourself looks like --
+                # qtbase:arm64-android needs qtbase:x64-linux so moc and
+                # androiddeployqt can run -- and dropping it loses the host
+                # toolchain the cross build is built with.
+                if ($dep -eq "${pkg}:$triplet") { continue }
 
                 if ($is_host) {
                     $host_deps[$dep] = $true
@@ -691,6 +702,8 @@ function VcpkgListDeps {
 
 function VcpkgListHostDeps {
     param(
+        [switch]$Direct,
+
         [parameter(valuefromremainingarguments=$true)]
         [string[]]$qualified_packages
     )
@@ -698,6 +711,14 @@ function VcpkgListHostDeps {
     check_env
 
     $direct_host_deps = (get_pkg_deps $qualified_packages).host
+
+    # -Direct stops at what the named packages themselves require on the host.
+    # The closure below is the right answer for a host that has to build those
+    # tools from nothing, and the wrong one for a host that already has them:
+    # a Qt in the set drags its whole desktop stack in behind it.
+    if ($Direct) {
+        return $direct_host_deps.keys | %{ ($_ -split ':')[0] }
+    }
 
     # Recursively collect transitive host deps. Once a package is a host
     # dep, every package it depends on must also be present on the host
@@ -722,7 +743,7 @@ function VcpkgListHostDeps {
                 if ($transitive -notmatch ':') {
                     $transitive = "${transitive}:$dep_triplet"
                 }
-                if (($transitive -split ':')[0] -eq $dep_pkg) { continue }
+                if ($transitive -eq "${dep_pkg}:$dep_triplet") { continue }
                 if (-not $visited[$transitive]) {
                     $visited[$transitive] = $true
                     &$visit $transitive
