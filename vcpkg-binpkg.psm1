@@ -432,14 +432,26 @@ function order_zips_by_depends {
         $zips[$pkg] = $all_deps | %{ if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ } }
     }
     
-    $ordered = [ordered]@{}
+    $ordered  = [ordered]@{}
+    $visiting = [ordered]@{}
 
     while ($zips.count) {
         $pkg = $zips.getenumerator() | select -first 1 | % key
         
         $resolve = {
             param($pkg)
-            
+
+            # Stop at a package already being resolved further up the stack.
+            # Collecting dependencies from every feature makes cycles -- the
+            # freetype/harfbuzz pair is the usual one -- and $ordered is not
+            # marked until the walk below returns, so without this the cycle
+            # recurses until PowerShell gives up with a call depth overflow.
+            # Whichever member the walk entered by is ordered first; the rest
+            # are picked up by the loop outside.
+            if ($visiting.contains($pkg) -or $ordered.contains($pkg)) { return }
+
+            $visiting[$pkg] = $true
+
             (split-path -leaf $pkg) -match '^([^_]+)_[^_]+_(.+)\.zip$' > $null
             $pkg_name,$pkg_triplet = $matches[1,2]
             
@@ -452,7 +464,8 @@ function order_zips_by_depends {
                     -and -not $ordered.contains($_)
                 }
             } | %{ &$resolve $_ }
-            
+
+            $visiting.remove($pkg)
             $ordered[$pkg] = $true
             $zips.remove($pkg)
         }
