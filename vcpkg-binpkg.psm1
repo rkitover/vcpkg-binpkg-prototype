@@ -440,10 +440,10 @@ function order_zips_by_depends {
         $resolve = {
             param($pkg)
             
-            (split-path -leaf $pkg) -match '^([^_]+)' > $null
-            $pkg_name = $matches[1]
+            (split-path -leaf $pkg) -match '^([^_]+)_[^_]+_(.+)\.zip$' > $null
+            $pkg_name,$pkg_triplet = $matches[1,2]
             
-            $zips[$pkg] | ?{ $_ -notmatch "^${pkg_name}(:|`$)" } | %{
+            $zips[$pkg] | ?{ $_ -ne "${pkg_name}:${pkg_triplet}" } | %{
                 $_ -match '^([^:]+):(.*)' > $null
                 $dep_name,$triplet = $matches[1,2]
             
@@ -487,7 +487,6 @@ function missing_deps_in_zips {
     $missing = [ordered]@{}
 
     foreach ($pkg in $pkgs.keys) {
-        ($pkg_name) = $pkg -split ':'
         $deps = $pkgs[$pkg]
 
         if (-not $deps) { continue }
@@ -497,8 +496,17 @@ function missing_deps_in_zips {
                 $dep = "${dep}:${default_triplet}"
             }
 
-            # Skip self-references (feature deps on own package).
-            if (($dep -split ':')[0] -eq $pkg_name) { continue }
+            # Skip self-references (feature deps on own package), which are
+            # the same port *and* the same triplet. The same port for another
+            # triplet is a host dependency on itself -- icu:arm64-android needs
+            # icu:x64-linux to cross-build its data -- and has to be reported.
+            #
+            # The name this compared against came from `($pkg_name) = $pkg
+            # -split ':'`, which assigns the whole array rather than its first
+            # element, so the test never matched and the filter never did
+            # anything. It happened not to matter: a genuine self-reference is
+            # in $pkgs by definition and so was never reported missing either.
+            if ($dep -eq $pkg) { continue }
 
             if (-not $pkgs.contains($dep)) {
                 $missing[$dep] = $true
@@ -556,7 +564,10 @@ function PruneIncompleteZips($zips_dir) {
         $qualified_deps = $all_deps | %{
             if (-not ($_ -match ':')) { "${_}:$triplet" } else { $_ }
         } | ?{
-            ($_ -split ':')[0] -ne $pkg_name
+            # Same port and same triplet is a self-reference; the same port for
+            # another triplet is a host dependency, and calling it satisfied
+            # lets an incomplete set through to vcpkg's database.
+            $_ -ne "${pkg_name}:${triplet}"
         }
 
         $remaining["${pkg_name}:${triplet}"] = @{
