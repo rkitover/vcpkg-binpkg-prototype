@@ -846,6 +846,15 @@ function InstallVcpkgPkgZip($zips) {
 
             if (-not $build_dep_triplet) { $build_dep_triplet = $host_triplet }
 
+            # A package is not its own build dependency. A port that declares a
+            # host dependency on itself -- icu and libcap both do, to build
+            # their data and their tools -- resolves it to itself whenever the
+            # host triplet is the target triplet, and it is never installed at
+            # this point because installing it is what we are here to do. So
+            # vcpkg was asked for it and built from source the very package
+            # about to be unpacked.
+            if ($build_dep -eq $pkg -and $build_dep_triplet -eq $triplet) { continue }
+
             if (-not ($status_entries | ?{ $_.package -eq $build_dep -and $_.architecture -eq $build_dep_triplet })) {
                 "Installing build dependency ${build_dep}:$build_dep_triplet for $zip_file..."
                 &$vcpkg install --allow-unsupported --host-triplet $host_triplet "${build_dep}:$build_dep_triplet"
