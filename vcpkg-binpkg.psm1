@@ -397,9 +397,14 @@ function read_control($zip) {
     $entries = read_db($control_text -split '\r?\n')
 
     # Backward compat: old packages were packed with "Feature: core" for the
-    # main entry; normalise to empty to match the real status file format.
+    # main entry. The real status file has no Feature line there at all, so drop
+    # the key rather than emptying it: an empty string and a missing key compare
+    # unequal, and what compares them is what decides whether the entry already
+    # exists or has to be added.
     foreach ($entry in $entries) {
-        if ($entry['Feature'] -eq 'core') { $entry['Feature'] = '' }
+        if ($entry['Feature'] -eq 'core' -or $entry['Feature'] -eq '') {
+            $entry.remove('Feature')
+        }
     }
 
     $entries
@@ -867,7 +872,15 @@ function InstallVcpkgPkgZip($zips) {
 
         pushd $env:VCPKG_ROOT
 
-        if (file_list $pkg $version $triplet) {
+        # The version installed, not the one arriving. On an upgrade they
+        # differ, and a file list under the arriving version does not exist yet,
+        # so the old install was never removed: its files stayed as whatever the
+        # new package did not overwrite, and its info/*.list stayed with them.
+        $installed_version = $status_entries | ?{
+            $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and -not $_.Feature
+        } | % Version | select-object -first 1
+
+        if ($installed_version -and (file_list $pkg $installed_version $triplet)) {
             RemoveVcpkgPkg "${pkg}:$triplet"
         }
 
@@ -954,8 +967,18 @@ function InstallVcpkgPkgZip($zips) {
             $status_entry.Status          = 'install ok installed'
 
             $status_entries = &{
+                # A feature of '' and no feature at all both mean the main
+                # entry, and one of each compares unequal -- which appended a
+                # second `Package: wxwidgets` / `Architecture: arm64-android`
+                # beside the one already there, and two of those is a status
+                # database vcpkg will not parse: it stops at
+                # statusparagraphs.cpp with an internal error and no detail.
+                $control_feature = if ($control.feature) { $control.feature } else { '' }
+
                 foreach ($status in $status_entries) {
-                    if ($status.package -eq $pkg -and $status.architecture -eq $triplet -and $status.feature -eq $control.feature) {
+                    $status_feature = if ($status.feature) { $status.feature } else { '' }
+
+                    if ($status.package -eq $pkg -and $status.architecture -eq $triplet -and $status_feature -eq $control_feature) {
                         $exists = $true
                         
                         if (-not $revision) {
