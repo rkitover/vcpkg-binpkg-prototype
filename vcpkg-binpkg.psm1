@@ -237,8 +237,18 @@ function WriteVcpkgPkgZip {
 
     $cwd = $PWD
 
+    # Only the installed entry. vcpkg leaves a "purge ok not-installed"
+    # paragraph behind for every version it ever removed, so a port whose
+    # version churns accumulates them -- wxwidgets:x86-mingw-static on the
+    # nightly builder had nine beside the live one. Unfiltered, $pkg_ver below
+    # comes back an array, the .list path interpolates to
+    # "wxwidgets_3.3.4-9 3.3.4-8 ..._x86-mingw-static.list", nothing resolves,
+    # and an installed port reports itself as not installed. The CONTROL file
+    # written further down iterates these too, so the filter keeps the dead
+    # versions' metadata out of the zip as well.
     $status_entries = read_status_file | ?{
-        $_.Package -eq $pkg -and $_.Architecture -eq $triplet
+        $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and
+        $_.Status -eq 'install ok installed'
     }
 
     $pkg_ver = $status_entries | ?{ -not $_.Feature } | % Version
@@ -347,8 +357,11 @@ function RemoveVcpkgPkg {
 
     ($pkg, $triplet) = $qualified_package -split ':'
 
+    # Installed entries only, as in WriteVcpkgPkgZip: stale purge paragraphs
+    # otherwise make this an array and the .list lookup below miss.
     $pkg_ver = read_status_file | ?{
-        $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and -not $_.Feature
+        $_.Package -eq $pkg -and $_.Architecture -eq $triplet -and -not $_.Feature -and
+        $_.Status -eq 'install ok installed'
     } | % Version
 
     pushd $env:VCPKG_ROOT
